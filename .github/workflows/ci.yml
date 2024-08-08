@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - dev
-      - master
+      - main
 
 # only run the latest commit to avoid cache overwrites
 concurrency:
@@ -35,7 +35,7 @@ jobs:
           push: true
           platforms: linux/amd64
           target: frigate
-          tags: ${{ steps.setup.outputs.image-name }}-amd64
+          tags: ${{ steps.setup.outputs.image-name }}-amd64,${{ steps.setup.outputs.base-image-name }}:latest-amd64
           cache-from: type=registry,ref=${{ steps.setup.outputs.cache-name }}-amd64
   arm64_build:
     runs-on: ubuntu-latest
@@ -57,7 +57,7 @@ jobs:
           platforms: linux/arm64
           target: frigate
           tags: |
-            ${{ steps.setup.outputs.image-name }}-standard-arm64
+            ${{ steps.setup.outputs.image-name }}-standard-arm64,${{ steps.setup.outputs.base-image-name }}:latest-standard-arm64
           cache-from: type=registry,ref=${{ steps.setup.outputs.cache-name }}-arm64
       - name: Build and push RPi build
         uses: docker/bake-action@v4
