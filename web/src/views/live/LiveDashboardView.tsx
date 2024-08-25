@@ -28,10 +28,10 @@ import DraggableGridLayout from "./DraggableGridLayout";
 import { IoClose } from "react-icons/io5";
 import { LuLayoutDashboard } from "react-icons/lu";
 import { cn } from "@/lib/utils";
-import { LivePlayerError, LivePlayerMode, LiveViewMode } from "@/types/live";
+import { LivePlayerError, LiveViewMode } from "@/types/live";
 import { FaCompress, FaExpand } from "react-icons/fa";
+import useCameraLiveMode from "@/hooks/use-camera-live-mode";
 import { useResizeObserver } from "@/hooks/resize-observer";
-import useKeyboardListener from "@/hooks/use-keyboard-listener";
 
 type LiveDashboardViewProps = {
   cameras: CameraConfig[];
@@ -128,11 +128,7 @@ export default function LiveDashboardView({
   }, [allEvents]);
 
   // camera live views
-
   const [liveViewMode] = usePersistence<LiveViewMode>("liveViewMode", "auto");
-  const [preferredLiveModes, setPreferredLiveModes] = useState<{
-    [key: string]: LivePlayerMode;
-  }>({});
 
   const [{ height: containerHeight }] = useResizeObserver(containerRef);
 
@@ -187,32 +183,8 @@ export default function LiveDashboardView({
     };
   }, []);
 
-  useEffect(() => {
-    if (!cameras) return;
-
-    const mseSupported =
-      "MediaSource" in window || "ManagedMediaSource" in window;
-
-    const newPreferredLiveModes = cameras.reduce(
-      (acc, camera) => {
-        const isRestreamed =
-          config &&
-          Object.keys(config.go2rtc.streams || {}).includes(
-            camera.live.stream_name,
-          );
-
-        if (!mseSupported) {
-          acc[camera.name] = isRestreamed ? "webrtc" : "jsmpeg";
-        } else {
-          acc[camera.name] = isRestreamed ? "mse" : "jsmpeg";
-        }
-        return acc;
-      },
-      {} as { [key: string]: LivePlayerMode },
-    );
-
-    setPreferredLiveModes(newPreferredLiveModes);
-  }, [cameras, config, windowVisible]);
+  const { preferredLiveModes, setPreferredLiveModes, resetPreferredLiveMode } =
+    useCameraLiveMode(cameras, windowVisible);
 
   const cameraRef = useCallback(
     (node: HTMLElement | null) => {
@@ -247,18 +219,6 @@ export default function LiveDashboardView({
     },
     [setPreferredLiveModes],
   );
-
-  useKeyboardListener(["f"], (key, modifiers) => {
-    if (!modifiers.down) {
-      return;
-    }
-
-    switch (key) {
-      case "f":
-        toggleFullscreen();
-        break;
-    }
-  });
 
   return (
     <div
@@ -395,6 +355,7 @@ export default function LiveDashboardView({
                   showStillWithoutActivity={liveViewMode != "continuous"}
                   onClick={() => onSelectCamera(camera.name)}
                   onError={(e) => handleError(camera.name, e)}
+                  onResetLiveMode={() => resetPreferredLiveMode(camera.name)}
                 />
               );
             })}

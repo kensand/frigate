@@ -83,12 +83,14 @@ import { useSessionPersistence } from "@/hooks/use-session-persistence";
 type LiveCameraViewProps = {
   config?: FrigateConfig;
   camera: CameraConfig;
+  supportsFullscreen: boolean;
   fullscreen: boolean;
   toggleFullscreen: () => void;
 };
 export default function LiveCameraView({
   config,
   camera,
+  supportsFullscreen,
   fullscreen,
   toggleFullscreen,
 }: LiveCameraViewProps) {
@@ -227,6 +229,10 @@ export default function LiveCameraView({
       return "webrtc";
     }
 
+    if (!isRestreamed) {
+      return "jsmpeg";
+    }
+
     return "mse";
   }, [lowBandwidth, mic, webRTC, isRestreamed]);
 
@@ -286,14 +292,23 @@ export default function LiveCameraView({
     }
   }, [fullscreen, isPortrait, cameraAspectRatio, containerAspectRatio]);
 
-  const handleError = useCallback((e: LivePlayerError) => {
-    if (e == "mse-decode") {
-      setWebRTC(true);
-    } else {
-      setWebRTC(false);
-      setLowBandwidth(true);
-    }
-  }, []);
+  const handleError = useCallback(
+    (e: LivePlayerError) => {
+      if (e) {
+        if (
+          !webRTC &&
+          config &&
+          config.go2rtc?.webrtc?.candidates?.length > 0
+        ) {
+          setWebRTC(true);
+        } else {
+          setWebRTC(false);
+          setLowBandwidth(true);
+        }
+      }
+    },
+    [config, webRTC],
+  );
 
   return (
     <TransformWrapper minScale={1.0} wheel={{ smoothStep: 0.005 }}>
@@ -363,7 +378,7 @@ export default function LiveCameraView({
                   )}
                 </Button>
               )}
-              {!isIOS && (
+              {supportsFullscreen && (
                 <CameraFeatureToggle
                   className="p-2 md:p-0"
                   variant={fullscreen ? "overlay" : "primary"}
