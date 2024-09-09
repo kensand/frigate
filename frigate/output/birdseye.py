@@ -357,16 +357,15 @@ class BirdsEyeFrameManager:
             frame = None
             channel_dims = None
         else:
-            try:
-                frame = self.frame_manager.get(
-                    f"{camera}{frame_time}", self.config.cameras[camera].frame_shape_yuv
-                )
-            except FileNotFoundError:
-                # TODO: better frame management would prevent this edge case
-                logger.warning(
-                    f"Unable to copy frame {camera}{frame_time} to birdseye."
-                )
+            frame_id = f"{camera}{frame_time}"
+            frame = self.frame_manager.get(
+                frame_id, self.config.cameras[camera].frame_shape_yuv
+            )
+
+            if frame is None:
+                logger.debug(f"Unable to copy frame {camera}{frame_time} to birdseye.")
                 return
+
             channel_dims = self.cameras[camera]["channel_dims"]
 
         copy_yuv_to_position(
@@ -376,6 +375,8 @@ class BirdsEyeFrameManager:
             frame,
             channel_dims,
         )
+
+        self.frame_manager.close(frame_id)
 
     def camera_active(self, mode, object_box_count, motion_box_count):
         if mode == BirdseyeModeEnum.continuous:
@@ -718,7 +719,6 @@ class Birdseye:
     def __init__(
         self,
         config: FrigateConfig,
-        frame_manager: SharedMemoryFrameManager,
         stop_event: mp.Event,
         websocket_server,
     ) -> None:
@@ -738,6 +738,7 @@ class Birdseye:
         self.broadcaster = BroadcastThread(
             "birdseye", self.converter, websocket_server, stop_event
         )
+        frame_manager = SharedMemoryFrameManager()
         self.birdseye_manager = BirdsEyeFrameManager(config, frame_manager, stop_event)
         self.config_subscriber = ConfigSubscriber("config/birdseye/")
 

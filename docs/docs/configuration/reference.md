@@ -372,6 +372,14 @@ motion:
   # Optional: Delay when updating camera motion through MQTT from ON -> OFF (default: shown below).
   mqtt_off_delay: 30
 
+# Optional: Notification Configuration
+notifications:
+  # Optional: Enable notification service (default: shown below)
+  enabled: False
+  # Optional: Email for push service to reach out to
+  # NOTE: This is required to use notifications
+  email: "admin@example.com"
+
 # Optional: Record configuration
 # NOTE: Can be overridden at the camera level
 record:
@@ -411,32 +419,46 @@ record:
     # Optional: Quality of recording preview (default: shown below).
     # Options are: very_low, low, medium, high, very_high
     quality: medium
-  # Optional: Event recording settings
-  events:
-    # Optional: Number of seconds before the event to include (default: shown below)
+  # Optional: alert recording settings
+  alerts:
+    # Optional: Number of seconds before the alert to include (default: shown below)
     pre_capture: 5
-    # Optional: Number of seconds after the event to include (default: shown below)
+    # Optional: Number of seconds after the alert to include (default: shown below)
     post_capture: 5
-    # Optional: Objects to save recordings for. (default: all tracked objects)
-    objects:
-      - person
-    # Optional: Retention settings for recordings of events
+    # Optional: Retention settings for recordings of alerts
     retain:
-      # Required: Default retention days (default: shown below)
-      default: 10
+      # Required: Retention days (default: shown below)
+      days: 14
       # Optional: Mode for retention. (default: shown below)
-      #   all - save all recording segments for events regardless of activity
-      #   motion - save all recordings segments for events with any detected motion
-      #   active_objects - save all recording segments for event with active/moving objects
+      #   all - save all recording segments for alerts regardless of activity
+      #   motion - save all recordings segments for alerts with any detected motion
+      #   active_objects - save all recording segments for alerts with active/moving objects
       #
       # NOTE: If the retain mode for the camera is more restrictive than the mode configured
       #       here, the segments will already be gone by the time this mode is applied.
       #       For example, if the camera retain mode is "motion", the segments without motion are
       #       never stored, so setting the mode to "all" here won't bring them back.
       mode: motion
-      # Optional: Per object retention days
-      objects:
-        person: 15
+  # Optional: detection recording settings
+  detections:
+    # Optional: Number of seconds before the detection to include (default: shown below)
+    pre_capture: 5
+    # Optional: Number of seconds after the detection to include (default: shown below)
+    post_capture: 5
+    # Optional: Retention settings for recordings of detections
+    retain:
+      # Required: Retention days (default: shown below)
+      days: 14
+      # Optional: Mode for retention. (default: shown below)
+      #   all - save all recording segments for detections regardless of activity
+      #   motion - save all recordings segments for detections with any detected motion
+      #   active_objects - save all recording segments for detections with active/moving objects
+      #
+      # NOTE: If the retain mode for the camera is more restrictive than the mode configured
+      #       here, the segments will already be gone by the time this mode is applied.
+      #       For example, if the camera retain mode is "motion", the segments without motion are
+      #       never stored, so setting the mode to "all" here won't bring them back.
+      mode: motion
 
 # Optional: Configuration for the jpg snapshots written to the clips directory for each event
 # NOTE: Can be overridden at the camera level
@@ -464,6 +486,35 @@ snapshots:
       person: 15
   # Optional: quality of the encoded jpeg, 0-100 (default: shown below)
   quality: 70
+
+# Optional: Configuration for semantic search capability
+semantic_search:
+  # Optional: Enable semantic search (default: shown below)
+  enabled: False
+  # Optional: Re-index embeddings database from historical events (default: shown below)
+  reindex: False
+
+# Optional: Configuration for AI generated event descriptions
+# NOTE: Semantic Search must be enabled for this to do anything.
+# WARNING: Depending on the provider, this will send thumbnails over the internet
+# to Google or OpenAI's LLMs to generate descriptions. It can be overridden at
+# the camera level (enabled: False) to enhance privacy for indoor cameras.
+genai:
+  # Optional: Enable Google Gemini description generation (default: shown below)
+  enabled: False
+  # Required if enabled: Provider must be one of ollama, gemini, or openai
+  provider: ollama
+  # Required if provider is ollama. May also be used for an OpenAI API compatible backend with the openai provider.
+  base_url: http://localhost::11434
+  # Required if gemini or openai
+  api_key: "{FRIGATE_GENAI_API_KEY}"
+  # Optional: The default prompt for generating descriptions. Can use replacement
+  # variables like "label", "sub_label", "camera" to make more dynamic. (default: shown below)
+  prompt: "Describe the {label} in the sequence of images with as much detail as possible. Do not describe the background."
+  # Optional: Object specific prompts to customize description results
+  # Format: {label}: {prompt}
+  object_prompts:
+    person: "My special person prompt."
 
 # Optional: Restream configuration
 # Uses https://github.com/AlexxIT/go2rtc (v1.9.2)
@@ -613,8 +664,8 @@ cameras:
       user: admin
       # Optional: password for login.
       password: admin
-      # Optional: Ignores time synchronization mismatches between the camera and the server during authentication. 
-      # Using NTP on both ends is recommended and this should only be set to True in a "safe" environment due to the security risk it represents. 
+      # Optional: Ignores time synchronization mismatches between the camera and the server during authentication.
+      # Using NTP on both ends is recommended and this should only be set to True in a "safe" environment due to the security risk it represents.
       ignore_time_mismatch: False
       # Optional: PTZ camera object autotracking. Keeps a moving object in
       # the center of the frame by automatically moving the PTZ camera.

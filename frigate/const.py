@@ -47,6 +47,7 @@ MAX_WAL_SIZE = 10  # MB
 
 FFMPEG_HWACCEL_NVIDIA = "preset-nvidia"
 FFMPEG_HWACCEL_VAAPI = "preset-vaapi"
+FFMPEG_HWACCEL_VULKAN = "preset-vulkan"
 
 # Regex Consts
 
@@ -81,6 +82,7 @@ REQUEST_REGION_GRID = "request_region_grid"
 UPSERT_REVIEW_SEGMENT = "upsert_review_segment"
 CLEAR_ONGOING_REVIEW_SEGMENTS = "clear_ongoing_review_segments"
 UPDATE_CAMERA_ACTIVITY = "update_camera_activity"
+UPDATE_EVENT_DESCRIPTION = "update_event_description"
 
 # Stats Values
 

@@ -223,7 +223,7 @@ class AudioEventMaintainer(threading.Thread):
                     audio_detections.append(label)
 
             # send audio detection data
-            self.detection_publisher.send_data(
+            self.detection_publisher.publish(
                 (
                     self.config.name,
                     datetime.datetime.now().timestamp(),
@@ -288,10 +288,7 @@ class AudioEventMaintainer(threading.Thread):
 
                 resp = requests.put(
                     f"{FRIGATE_LOCALHOST}/api/events/{detection['id']}/end",
-                    json={
-                        "end_time": detection["last_detection"]
-                        + self.config.record.events.post_capture
-                    },
+                    json={"end_time": detection["last_detection"]},
                 )
 
                 if resp.status_code == 200:

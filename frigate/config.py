@@ -169,6 +169,11 @@ class AuthConfig(FrigateBaseModel):
     hash_iterations: int = Field(default=600000, title="Password hash iterations")
 
 
+class NotificationConfig(FrigateBaseModel):
+    enabled: bool = Field(default=False, title="Enable notifications")
+    email: Optional[str] = Field(default=None, title="Email required for push.")
+
+
 class StatsConfig(FrigateBaseModel):
     amd_gpu_stats: bool = Field(default=True, title="Enable AMD GPU stats.")
     intel_gpu_stats: bool = Field(default=True, title="Enable Intel GPU stats.")
@@ -291,12 +296,14 @@ class RetainModeEnum(str, Enum):
     active_objects = "active_objects"
 
 
-class RetainConfig(FrigateBaseModel):
-    default: float = Field(default=10, title="Default retention period.")
+class RecordRetainConfig(FrigateBaseModel):
+    days: float = Field(default=0, title="Default retention period.")
+    mode: RetainModeEnum = Field(default=RetainModeEnum.all, title="Retain mode.")
+
+
+class ReviewRetainConfig(FrigateBaseModel):
+    days: float = Field(default=10, title="Default retention period.")
     mode: RetainModeEnum = Field(default=RetainModeEnum.motion, title="Retain mode.")
-    objects: Dict[str, float] = Field(
-        default_factory=dict, title="Object retention period."
-    )
 
 
 class EventsConfig(FrigateBaseModel):
@@ -304,18 +311,9 @@ class EventsConfig(FrigateBaseModel):
         default=5, title="Seconds to retain before event starts.", le=MAX_PRE_CAPTURE
     )
     post_capture: int = Field(default=5, title="Seconds to retain after event ends.")
-    objects: Optional[List[str]] = Field(
-        None,
-        title="List of objects to be detected in order to save the event.",
+    retain: ReviewRetainConfig = Field(
+        default_factory=ReviewRetainConfig, title="Event retention settings."
     )
-    retain: RetainConfig = Field(
-        default_factory=RetainConfig, title="Event retention settings."
-    )
-
-
-class RecordRetainConfig(FrigateBaseModel):
-    days: float = Field(default=0, title="Default retention period.")
-    mode: RetainModeEnum = Field(default=RetainModeEnum.all, title="Retain mode.")
 
 
 class RecordExportConfig(FrigateBaseModel):
@@ -350,8 +348,11 @@ class RecordConfig(FrigateBaseModel):
     retain: RecordRetainConfig = Field(
         default_factory=RecordRetainConfig, title="Record retention settings."
     )
-    events: EventsConfig = Field(
-        default_factory=EventsConfig, title="Event specific settings."
+    detections: EventsConfig = Field(
+        default_factory=EventsConfig, title="Detection specific retention settings."
+    )
+    alerts: EventsConfig = Field(
+        default_factory=EventsConfig, title="Alert specific retention settings."
     )
     export: RecordExportConfig = Field(
         default_factory=RecordExportConfig, title="Recording Export Config"
@@ -730,6 +731,38 @@ class ReviewConfig(FrigateBaseModel):
     )
 
 
+class SemanticSearchConfig(FrigateBaseModel):
+    enabled: bool = Field(default=False, title="Enable semantic search.")
+    reindex: Optional[bool] = Field(
+        default=False, title="Reindex all detections on startup."
+    )
+
+
+class GenAIProviderEnum(str, Enum):
+    openai = "openai"
+    gemini = "gemini"
+    ollama = "ollama"
+
+
+class GenAIConfig(FrigateBaseModel):
+    enabled: bool = Field(default=False, title="Enable GenAI.")
+    provider: GenAIProviderEnum = Field(
+        default=GenAIProviderEnum.openai, title="GenAI provider."
+    )
+    base_url: Optional[str] = Field(None, title="Provider base url.")
+    api_key: Optional[str] = Field(None, title="Provider API key.")
+    model: str = Field(default="gpt-4o", title="GenAI model.")
+    prompt: str = Field(
+        default="Describe the {label} in the sequence of images with as much detail as possible. Do not describe the background.",
+        title="Default caption prompt.",
+    )
+    object_prompts: Dict[str, str] = Field(default={}, title="Object specific prompts.")
+
+
+class GenAICameraConfig(FrigateBaseModel):
+    enabled: bool = Field(default=False, title="Enable GenAI for camera.")
+
+
 class AudioConfig(FrigateBaseModel):
     enabled: bool = Field(default=False, title="Enable audio events.")
     max_not_heard: int = Field(
@@ -887,6 +920,14 @@ class CameraFfmpegConfig(FfmpegConfig):
         return v
 
 
+class RetainConfig(FrigateBaseModel):
+    default: float = Field(default=10, title="Default retention period.")
+    mode: RetainModeEnum = Field(default=RetainModeEnum.motion, title="Retain mode.")
+    objects: Dict[str, float] = Field(
+        default_factory=dict, title="Object retention period."
+    )
+
+
 class SnapshotsConfig(FrigateBaseModel):
     enabled: bool = Field(default=False, title="Snapshots enabled.")
     clean_copy: bool = Field(
@@ -1010,6 +1051,9 @@ class CameraConfig(FrigateBaseModel):
     )
     review: ReviewConfig = Field(
         default_factory=ReviewConfig, title="Review configuration."
+    )
+    genai: GenAICameraConfig = Field(
+        default_factory=GenAICameraConfig, title="Generative AI configuration."
     )
     audio: AudioConfig = Field(
         default_factory=AudioConfig, title="Audio events configuration."
@@ -1238,10 +1282,19 @@ def verify_recording_retention(camera_config: CameraConfig) -> None:
     if (
         camera_config.record.retain.days != 0
         and rank_map[camera_config.record.retain.mode]
-        > rank_map[camera_config.record.events.retain.mode]
+        > rank_map[camera_config.record.alerts.retain.mode]
     ):
         logger.warning(
-            f"{camera_config.name}: Recording retention is configured for {camera_config.record.retain.mode} and event retention is configured for {camera_config.record.events.retain.mode}. The more restrictive retention policy will be applied."
+            f"{camera_config.name}: Recording retention is configured for {camera_config.record.retain.mode} and alert retention is configured for {camera_config.record.alerts.retain.mode}. The more restrictive retention policy will be applied."
+        )
+
+    if (
+        camera_config.record.retain.days != 0
+        and rank_map[camera_config.record.retain.mode]
+        > rank_map[camera_config.record.detections.retain.mode]
+    ):
+        logger.warning(
+            f"{camera_config.name}: Recording retention is configured for {camera_config.record.retain.mode} and detection retention is configured for {camera_config.record.detections.retain.mode}. The more restrictive retention policy will be applied."
         )
 
 
@@ -1326,6 +1379,9 @@ class FrigateConfig(FrigateBaseModel):
         default_factory=dict, title="Frigate environment variables."
     )
     ui: UIConfig = Field(default_factory=UIConfig, title="UI configuration.")
+    notifications: NotificationConfig = Field(
+        default_factory=NotificationConfig, title="Notification Config"
+    )
     telemetry: TelemetryConfig = Field(
         default_factory=TelemetryConfig, title="Telemetry configuration."
     )
@@ -1363,6 +1419,12 @@ class FrigateConfig(FrigateBaseModel):
     review: ReviewConfig = Field(
         default_factory=ReviewConfig, title="Review configuration."
     )
+    semantic_search: SemanticSearchConfig = Field(
+        default_factory=SemanticSearchConfig, title="Semantic search configuration."
+    )
+    genai: GenAIConfig = Field(
+        default_factory=GenAIConfig, title="Generative AI configuration."
+    )
     audio: AudioConfig = Field(
         default_factory=AudioConfig, title="Global Audio events configuration."
     )
@@ -1380,7 +1442,7 @@ class FrigateConfig(FrigateBaseModel):
         default_factory=TimestampStyleConfig,
         title="Global timestamp style configuration.",
     )
-    version: Optional[float] = Field(default=None, title="Current config version.")
+    version: Optional[str] = Field(default=None, title="Current config version.")
 
     def runtime_config(self, plus_api: PlusApi = None) -> FrigateConfig:
         """Merge camera config with globals."""
@@ -1396,6 +1458,10 @@ class FrigateConfig(FrigateBaseModel):
         if config.mqtt.user or config.mqtt.password:
             config.mqtt.user = config.mqtt.user.format(**FRIGATE_ENV_VARS)
             config.mqtt.password = config.mqtt.password.format(**FRIGATE_ENV_VARS)
+
+        # GenAI substitution
+        if config.genai.api_key:
+            config.genai.api_key = config.genai.api_key.format(**FRIGATE_ENV_VARS)
 
         # set default min_score for object attributes
         for attribute in ALL_ATTRIBUTE_LABELS:
@@ -1418,6 +1484,7 @@ class FrigateConfig(FrigateBaseModel):
                 "live": ...,
                 "objects": ...,
                 "review": ...,
+                "genai": {"enabled"},
                 "motion": ...,
                 "detect": ...,
                 "ffmpeg": ...,
