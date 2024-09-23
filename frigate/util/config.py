@@ -192,7 +192,10 @@ def migrate_015_0(config: dict[str, dict[str, any]]) -> dict[str, dict[str, any]
                     "default"
                 ]
         else:
-            detections_retention["retain"]["days"] = 0
+            continuous_days = config.get("record", {}).get("retain", {}).get("days")
+            detections_retention["retain"]["days"] = (
+                continuous_days if continuous_days else 1
+            )
 
         new_config["record"]["alerts"] = alerts_retention
         new_config["record"]["detections"] = detections_retention
@@ -232,7 +235,12 @@ def migrate_015_0(config: dict[str, dict[str, any]]) -> dict[str, dict[str, any]
                         "default"
                     ]
             else:
-                detections_retention["retain"]["days"] = 0
+                continuous_days = (
+                    camera_config.get("record", {}).get("retain", {}).get("days")
+                )
+                detections_retention["retain"]["days"] = (
+                    continuous_days if continuous_days else 1
+                )
 
             camera_config["record"]["alerts"] = alerts_retention
             camera_config["record"]["detections"] = detections_retention
@@ -306,10 +314,10 @@ class StreamInfoRetriever:
     def __init__(self) -> None:
         self.stream_cache: dict[str, tuple[int, int]] = {}
 
-    def get_stream_info(self, path: str) -> str:
+    def get_stream_info(self, ffmpeg, path: str) -> str:
         if path in self.stream_cache:
             return self.stream_cache[path]
 
-        info = asyncio.run(get_video_properties(path))
+        info = asyncio.run(get_video_properties(ffmpeg, path))
         self.stream_cache[path] = info
         return info

@@ -91,13 +91,17 @@ export function AnimatedEventCard({
   const [alertVideos] = usePersistence("alertVideos", true);
 
   const aspectRatio = useMemo(() => {
-    if (!config || !Object.keys(config.cameras).includes(event.camera)) {
+    if (
+      !config ||
+      !alertVideos ||
+      !Object.keys(config.cameras).includes(event.camera)
+    ) {
       return 16 / 9;
     }
 
     const detect = config.cameras[event.camera].detect;
     return detect.width / detect.height;
-  }, [config, event]);
+  }, [alertVideos, config, event]);
 
   return (
     <Tooltip>
@@ -131,6 +135,13 @@ export function AnimatedEventCard({
             <div
               className="size-full cursor-pointer overflow-hidden rounded md:rounded-lg"
               onClick={onOpenReview}
+              onAuxClick={(e) => {
+                if (e.button === 1) {
+                  window
+                    .open(`${baseUrl}review?id=${event.id}`, "_blank")
+                    ?.focus();
+                }
+              }}
             >
               {!alertVideos ? (
                 <img

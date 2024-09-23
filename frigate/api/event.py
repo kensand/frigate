@@ -251,6 +251,74 @@ def events():
     return jsonify(list(events))
 
 
+@EventBp.route("/events/explore")
+def events_explore():
+    limit = request.args.get("limit", 10, type=int)
+
+    subquery = Event.select(
+        Event.id,
+        Event.camera,
+        Event.label,
+        Event.zones,
+        Event.start_time,
+        Event.end_time,
+        Event.has_clip,
+        Event.has_snapshot,
+        Event.plus_id,
+        Event.retain_indefinitely,
+        Event.sub_label,
+        Event.top_score,
+        Event.false_positive,
+        Event.box,
+        Event.data,
+        fn.rank()
+        .over(partition_by=[Event.label], order_by=[Event.start_time.desc()])
+        .alias("rank"),
+        fn.COUNT(Event.id).over(partition_by=[Event.label]).alias("event_count"),
+    ).alias("subquery")
+
+    query = (
+        Event.select(
+            subquery.c.id,
+            subquery.c.camera,
+            subquery.c.label,
+            subquery.c.zones,
+            subquery.c.start_time,
+            subquery.c.end_time,
+            subquery.c.has_clip,
+            subquery.c.has_snapshot,
+            subquery.c.plus_id,
+            subquery.c.retain_indefinitely,
+            subquery.c.sub_label,
+            subquery.c.top_score,
+            subquery.c.false_positive,
+            subquery.c.box,
+            subquery.c.data,
+            subquery.c.event_count,
+        )
+        .from_(subquery)
+        .where(subquery.c.rank <= limit)
+        .order_by(subquery.c.event_count.desc(), subquery.c.start_time.desc())
+        .dicts()
+    )
+
+    events = list(query.iterator())
+
+    processed_events = [
+        {k: v for k, v in event.items() if k != "data"}
+        | {
+            "data": {
+                k: v
+                for k, v in event["data"].items()
+                if k in ["type", "score", "top_score", "description"]
+            }
+        }
+        for event in events
+    ]
+
+    return jsonify(processed_events)
+
+
 @EventBp.route("/event_ids")
 def event_ids():
     idString = request.args.get("ids")
@@ -274,7 +342,7 @@ def event_ids():
 @EventBp.route("/events/search")
 def events_search():
     query = request.args.get("query", type=str)
-    search_type = request.args.get("search_type", "text", type=str)
+    search_type = request.args.get("search_type", "thumbnail,description", type=str)
     include_thumbnails = request.args.get("include_thumbnails", default=1, type=int)
     limit = request.args.get("limit", 50, type=int)
 
@@ -285,7 +353,10 @@ def events_search():
     after = request.args.get("after", type=float)
     before = request.args.get("before", type=float)
 
-    if not query:
+    # for similarity search
+    event_id = request.args.get("event_id", type=str)
+
+    if not query and not event_id:
         return make_response(
             jsonify(
                 {
@@ -317,7 +388,10 @@ def events_search():
         Event.zones,
         Event.start_time,
         Event.end_time,
+        Event.has_clip,
+        Event.has_snapshot,
         Event.data,
+        Event.plus_id,
         ReviewSegment.thumb_path,
     ]
 
@@ -358,10 +432,10 @@ def events_search():
     thumb_ids = {}
     desc_ids = {}
 
-    if search_type == "thumbnail":
+    if search_type == "similarity":
         # Grab the ids of events that match the thumbnail image embeddings
         try:
-            search_event: Event = Event.get(Event.id == query)
+            search_event: Event = Event.get(Event.id == event_id)
         except DoesNotExist:
             return make_response(
                 jsonify(
@@ -379,31 +453,41 @@ def events_search():
             n_results=limit,
             where=where,
         )
-        thumb_ids = dict(zip(thumb_result["ids"][0], thumb_result["distances"][0]))
-    else:
-        thumb_result = context.embeddings.thumbnail.query(
-            query_texts=[query],
-            n_results=limit,
-            where=where,
-        )
-        # Do a rudimentary normalization of the difference in distances returned by CLIP and MiniLM.
         thumb_ids = dict(
             zip(
                 thumb_result["ids"][0],
                 context.thumb_stats.normalize(thumb_result["distances"][0]),
             )
         )
-        desc_result = context.embeddings.description.query(
-            query_texts=[query],
-            n_results=limit,
-            where=where,
-        )
-        desc_ids = dict(
-            zip(
-                desc_result["ids"][0],
-                context.desc_stats.normalize(desc_result["distances"][0]),
+    else:
+        search_types = search_type.split(",")
+
+        if "thumbnail" in search_types:
+            thumb_result = context.embeddings.thumbnail.query(
+                query_texts=[query],
+                n_results=limit,
+                where=where,
             )
-        )
+            # Do a rudimentary normalization of the difference in distances returned by CLIP and MiniLM.
+            thumb_ids = dict(
+                zip(
+                    thumb_result["ids"][0],
+                    context.thumb_stats.normalize(thumb_result["distances"][0]),
+                )
+            )
+
+        if "description" in search_types:
+            desc_result = context.embeddings.description.query(
+                query_texts=[query],
+                n_results=limit,
+                where=where,
+            )
+            desc_ids = dict(
+                zip(
+                    desc_result["ids"][0],
+                    context.desc_stats.normalize(desc_result["distances"][0]),
+                )
+            )
 
     results = {}
     for event_id in thumb_ids.keys() | desc_ids:
@@ -439,9 +523,11 @@ def events_search():
     events = [
         {k: v for k, v in event.items() if k != "data"}
         | {
-            k: v
-            for k, v in event["data"].items()
-            if k in ["type", "score", "top_score", "description"]
+            "data": {
+                k: v
+                for k, v in event["data"].items()
+                if k in ["type", "score", "top_score", "description"]
+            }
         }
         | {
             "search_distance": results[event["id"]]["distance"],

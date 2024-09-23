@@ -210,6 +210,10 @@ birdseye:
 # Optional: ffmpeg configuration
 # More information about presets at https://docs.frigate.video/configuration/ffmpeg_presets
 ffmpeg:
+  # Optional: ffmpeg binry path (default: shown below)
+  # can also be set to `7.0` or `5.0` to specify one of the included versions
+  # or can be set to any path that holds `bin/ffmpeg` & `bin/ffprobe`
+  path: "default"
   # Optional: global ffmpeg args (default: shown below)
   global_args: -hide_banner -loglevel warning -threads 2
   # Optional: global hwaccel args (default: auto detect)
@@ -271,13 +275,13 @@ detect:
   # especially when using separate streams for detect and record.
   # Use this setting to make the timeline bounding boxes more closely align
   # with the recording. The value can be positive or negative.
-  # TIP: Imagine there is an event clip with a person walking from left to right.
-  #      If the event timeline bounding box is consistently to the left of the person
+  # TIP: Imagine there is an tracked object clip with a person walking from left to right.
+  #      If the tracked object lifecycle bounding box is consistently to the left of the person
   #      then the value should be decreased. Similarly, if a person is walking from
   #      left to right and the bounding box is consistently ahead of the person
   #      then the value should be increased.
   # TIP: This offset is dynamic so you can change the value and it will update existing
-  #      events, this makes it easy to tune.
+  #      tracked objects, this makes it easy to tune.
   # WARNING: Fast moving objects will likely not have the bounding box align.
   annotation_offset: 0
 
@@ -394,9 +398,9 @@ record:
   sync_recordings: False
   # Optional: Retention settings for recording
   retain:
-    # Optional: Number of days to retain recordings regardless of events (default: shown below)
-    # NOTE: This should be set to 0 and retention should be defined in events section below
-    #       if you only want to retain recordings of events.
+    # Optional: Number of days to retain recordings regardless of tracked objects (default: shown below)
+    # NOTE: This should be set to 0 and retention should be defined in alerts and detections section below
+    #       if you only want to retain recordings of alerts and detections.
     days: 0
     # Optional: Mode for retention. Available options are: all, motion, and active_objects
     #   all - save all recording segments regardless of activity
@@ -460,7 +464,7 @@ record:
       #       never stored, so setting the mode to "all" here won't bring them back.
       mode: motion
 
-# Optional: Configuration for the jpg snapshots written to the clips directory for each event
+# Optional: Configuration for the jpg snapshots written to the clips directory for each tracked object
 # NOTE: Can be overridden at the camera level
 snapshots:
   # Optional: Enable writing jpg snapshot to /media/frigate/clips (default: shown below)
@@ -491,16 +495,16 @@ snapshots:
 semantic_search:
   # Optional: Enable semantic search (default: shown below)
   enabled: False
-  # Optional: Re-index embeddings database from historical events (default: shown below)
+  # Optional: Re-index embeddings database from historical tracked objects (default: shown below)
   reindex: False
 
-# Optional: Configuration for AI generated event descriptions
+# Optional: Configuration for AI generated tracked object descriptions
 # NOTE: Semantic Search must be enabled for this to do anything.
 # WARNING: Depending on the provider, this will send thumbnails over the internet
 # to Google or OpenAI's LLMs to generate descriptions. It can be overridden at
 # the camera level (enabled: False) to enhance privacy for indoor cameras.
 genai:
-  # Optional: Enable Google Gemini description generation (default: shown below)
+  # Optional: Enable AI description generation (default: shown below)
   enabled: False
   # Required if enabled: Provider must be one of ollama, gemini, or openai
   provider: ollama
@@ -707,6 +711,18 @@ cameras:
       # Optional: Adjust sort order of cameras in the Birdseye view. Larger numbers come later (default: shown below)
       # By default the cameras are sorted alphabetically.
       order: 0
+
+    # Optional: Configuration for AI generated tracked object descriptions
+    genai:
+      # Optional: Enable AI description generation (default: shown below)
+      enabled: False
+      # Optional: The default prompt for generating descriptions. Can use replacement
+      # variables like "label", "sub_label", "camera" to make more dynamic. (default: shown below)
+      prompt: "Describe the {label} in the sequence of images with as much detail as possible. Do not describe the background."
+      # Optional: Object specific prompts to customize description results
+      # Format: {label}: {prompt}
+      object_prompts:
+        person: "My special person prompt."
 
 # Optional
 ui:

@@ -43,7 +43,7 @@ from frigate.events.audio import listen_to_audio
 from frigate.events.cleanup import EventCleanup
 from frigate.events.external import ExternalEventProcessor
 from frigate.events.maintainer import EventProcessor
-from frigate.log import log_process, root_configurer
+from frigate.log import log_thread
 from frigate.models import (
     Event,
     Export,
@@ -113,15 +113,6 @@ class FrigateApp:
             else:
                 logger.debug(f"Skipping directory: {d}")
 
-    def init_logger(self) -> None:
-        self.log_process = mp.Process(
-            target=log_process, args=(self.log_queue,), name="log_process"
-        )
-        self.log_process.daemon = True
-        self.log_process.start()
-        self.processes["logger"] = self.log_process.pid or 0
-        root_configurer(self.log_queue)
-
     def init_config(self) -> None:
         config_file = os.environ.get("CONFIG_FILE", "/config/config.yml")
 
@@ -138,8 +129,7 @@ class FrigateApp:
         # check if the config file needs to be migrated
         migrate_frigate_config(config_file)
 
-        user_config = FrigateConfig.parse_file(config_file)
-        self.config = user_config.runtime_config(self.plus_api)
+        self.config = FrigateConfig.parse_file(config_file, plus_api=self.plus_api)
 
         for camera_name in self.config.cameras.keys():
             # create camera_metrics
@@ -374,7 +364,7 @@ class FrigateApp:
             except PermissionError:
                 logger.error("Unable to write to /config to save export state")
 
-            migrate_exports(self.config.cameras.keys())
+            migrate_exports(self.config.ffmpeg, self.config.cameras.keys())
 
     def init_external_event_processor(self) -> None:
         self.external_event_processor = ExternalEventProcessor(self.config)
@@ -406,7 +396,7 @@ class FrigateApp:
         if self.config.mqtt.enabled:
             comms.append(MqttClient(self.config))
 
-        if self.config.notifications.enabled:
+        if self.config.notifications.enabled_in_config:
             comms.append(WebPushClient(self.config))
 
         comms.append(WebSocketClient(self.config))
@@ -667,6 +657,7 @@ class FrigateApp:
                 logger.info("********************************************************")
                 logger.info("********************************************************")
 
+    @log_thread()
     def start(self) -> None:
         parser = argparse.ArgumentParser(
             prog="Frigate",
@@ -675,7 +666,6 @@ class FrigateApp:
         parser.add_argument("--validate-config", action="store_true")
         args = parser.parse_args()
 
-        self.init_logger()
         logger.info(f"Starting Frigate ({VERSION})")
 
         try:
@@ -702,13 +692,11 @@ class FrigateApp:
                 print("*************************************************************")
                 print("***    End Config Validation Errors                       ***")
                 print("*************************************************************")
-                self.log_process.terminate()
                 sys.exit(1)
             if args.validate_config:
                 print("*************************************************************")
                 print("*** Your config file is valid.                            ***")
                 print("*************************************************************")
-                self.log_process.terminate()
                 sys.exit(0)
             self.set_environment_vars()
             self.set_log_levels()
@@ -725,7 +713,6 @@ class FrigateApp:
             self.init_dispatcher()
         except Exception as e:
             print(e)
-            self.log_process.terminate()
             sys.exit(1)
         self.start_detectors()
         self.start_video_output_processor()
@@ -847,8 +834,5 @@ class FrigateApp:
             shm = self.detection_shms.pop()
             shm.close()
             shm.unlink()
-
-        self.log_process.terminate()
-        self.log_process.join()
 
         os._exit(os.EX_OK)

@@ -1,6 +1,11 @@
 import { isDesktop, isIOS, isMobile } from "react-device-detect";
-import { Sheet, SheetContent } from "../../ui/sheet";
-import { Drawer, DrawerContent } from "../../ui/drawer";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "../../ui/sheet";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { useFormattedTimestamp } from "@/hooks/use-date-utils";
@@ -8,12 +13,12 @@ import { getIconForLabel } from "@/utils/iconUtil";
 import { useApiHost } from "@/api";
 import { ReviewDetailPaneType, ReviewSegment } from "@/types/review";
 import { Event } from "@/types/event";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FrigatePlusDialog } from "../dialog/FrigatePlusDialog";
 import ObjectLifecycle from "./ObjectLifecycle";
 import Chip from "@/components/indicators/Chip";
-import { FaDownload } from "react-icons/fa";
+import { FaDownload, FaImages, FaShareAlt } from "react-icons/fa";
 import FrigatePlusIcon from "@/components/icons/FrigatePlusIcon";
 import { FaArrowsRotate } from "react-icons/fa6";
 import {
@@ -21,6 +26,17 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { baseUrl } from "@/api/baseUrl";
+import { shareOrCopy } from "@/utils/browserUtil";
+import {
+  MobilePage,
+  MobilePageContent,
+  MobilePageDescription,
+  MobilePageHeader,
+  MobilePageTitle,
+} from "@/components/mobile/MobilePage";
 
 type ReviewDetailDialogProps = {
   review?: ReviewSegment;
@@ -57,6 +73,7 @@ export default function ReviewDetailDialog({
     config?.ui.time_format == "24hour"
       ? "%b %-d %Y, %H:%M"
       : "%b %-d %Y, %I:%M %p",
+    config?.ui.timezone,
   );
 
   // content
@@ -64,8 +81,19 @@ export default function ReviewDetailDialog({
   const [selectedEvent, setSelectedEvent] = useState<Event>();
   const [pane, setPane] = useState<ReviewDetailPaneType>("overview");
 
-  const Overlay = isDesktop ? Sheet : Drawer;
-  const Content = isDesktop ? SheetContent : DrawerContent;
+  // dialog and mobile page
+
+  const [isOpen, setIsOpen] = useState(review != undefined);
+
+  useEffect(() => {
+    setIsOpen(review != undefined);
+  }, [review]);
+
+  const Overlay = isDesktop ? Sheet : MobilePage;
+  const Content = isDesktop ? SheetContent : MobilePageContent;
+  const Header = isDesktop ? SheetHeader : MobilePageHeader;
+  const Title = isDesktop ? SheetTitle : MobilePageTitle;
+  const Description = isDesktop ? SheetDescription : MobilePageDescription;
 
   if (!review) {
     return;
@@ -74,7 +102,7 @@ export default function ReviewDetailDialog({
   return (
     <>
       <Overlay
-        open={review != undefined}
+        open={isOpen}
         onOpenChange={(open) => {
           if (!open) {
             setReview(undefined);
@@ -95,15 +123,43 @@ export default function ReviewDetailDialog({
 
         <Content
           className={cn(
-            isDesktop
-              ? pane == "overview"
-                ? "sm:max-w-xl"
-                : "pt-2 sm:max-w-4xl"
-              : "max-h-[80dvh] overflow-hidden p-2 pb-4",
+            "scrollbar-container overflow-y-auto",
+            isDesktop && pane == "overview"
+              ? "sm:max-w-xl"
+              : "pt-2 sm:max-w-4xl",
+            isMobile && "px-4",
           )}
         >
+          <span tabIndex={0} className="sr-only" />
           {pane == "overview" && (
-            <div className="scrollbar-container mt-3 flex size-full flex-col gap-5 overflow-y-auto">
+            <Header className="justify-center" onClose={() => setIsOpen(false)}>
+              <Title>Review Item Details</Title>
+              <Description className="sr-only">Review item details</Description>
+              <div
+                className={cn(
+                  "absolute",
+                  isDesktop && "right-1 top-8",
+                  isMobile && "right-0 top-3",
+                )}
+              >
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        shareOrCopy(`${baseUrl}review?id=${review.id}`)
+                      }
+                    >
+                      <FaShareAlt className="size-4 text-secondary-foreground" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Share this review item</TooltipContent>
+                </Tooltip>
+              </div>
+            </Header>
+          )}
+          {pane == "overview" && (
+            <div className="flex flex-col gap-5 md:mt-3">
               <div className="flex w-full flex-row">
                 <div className="flex w-full flex-col gap-3">
                   <div className="flex flex-col gap-1.5">
@@ -117,10 +173,10 @@ export default function ReviewDetailDialog({
                     <div className="text-sm">{formattedDate}</div>
                   </div>
                 </div>
-                <div className="flex w-full flex-col gap-2">
-                  <div className="flex flex-col gap-1.5">
+                <div className="flex w-full flex-col items-center gap-2">
+                  <div className="flex w-full flex-col gap-1.5">
                     <div className="text-sm text-primary/40">Objects</div>
-                    <div className="flex flex-col items-start gap-2 text-sm capitalize">
+                    <div className="scrollbar-container flex max-h-32 flex-col items-start gap-2 overflow-y-auto text-sm capitalize">
                       {events?.map((event) => {
                         return (
                           <div
@@ -139,7 +195,7 @@ export default function ReviewDetailDialog({
                     </div>
                   </div>
                   {review.data.zones.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="scrollbar-container flex max-h-32 w-full flex-col gap-1.5">
                       <div className="text-sm text-primary/40">Zones</div>
                       <div className="flex flex-col items-start gap-2 text-sm capitalize">
                         {review.data.zones.map((zone) => {
@@ -178,12 +234,8 @@ export default function ReviewDetailDialog({
           )}
 
           {pane == "details" && selectedEvent && (
-            <div className="scrollbar-container overflow-x-none mt-0 flex size-full flex-col gap-2 overflow-y-auto overflow-x-hidden">
-              <ObjectLifecycle
-                review={review}
-                event={selectedEvent}
-                setPane={setPane}
-              />
+            <div className="mt-0 flex size-full flex-col gap-2">
+              <ObjectLifecycle event={selectedEvent} setPane={setPane} />
             </div>
           )}
         </Content>
@@ -214,6 +266,8 @@ function EventItem({
   const imgRef = useRef(null);
 
   const [hovered, setHovered] = useState(isMobile);
+
+  const navigate = useNavigate();
 
   return (
     <>
@@ -307,6 +361,24 @@ function EventItem({
                     </Chip>
                   </TooltipTrigger>
                   <TooltipContent>View Object Lifecycle</TooltipContent>
+                </Tooltip>
+              )}
+
+              {event.has_snapshot && config?.semantic_search.enabled && (
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Chip
+                      className="cursor-pointer rounded-md bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500"
+                      onClick={() => {
+                        navigate(
+                          `/explore?search_type=similarity&event_id=${event.id}`,
+                        );
+                      }}
+                    >
+                      <FaImages className="size-4 text-white" />
+                    </Chip>
+                  </TooltipTrigger>
+                  <TooltipContent>Find Similar</TooltipContent>
                 </Tooltip>
               )}
             </div>

@@ -770,9 +770,15 @@ class CameraState:
                     }
                 )
 
-            # if the object's thumbnail is not from the current frame
-            if obj.false_positive or obj.thumbnail_data["frame_time"] != frame_time:
+            # if we don't have access to the current frame or
+            # if the object's thumbnail is not from the current frame, skip
+            if (
+                current_frame is None
+                or obj.false_positive
+                or obj.thumbnail_data["frame_time"] != frame_time
+            ):
                 continue
+
             if object_type in self.best_objects:
                 current_best = self.best_objects[object_type]
                 now = datetime.datetime.now().timestamp()
@@ -875,7 +881,7 @@ class CameraState:
         current_thumb_frames = {
             obj.thumbnail_data["frame_time"]
             for obj in tracked_objects.values()
-            if not obj.false_positive
+            if not obj.false_positive and obj.thumbnail_data is not None
         }
         current_best_frames = {
             obj.thumbnail_data["frame_time"] for obj in self.best_objects.values()
@@ -1132,12 +1138,14 @@ class TrackedObjectProcessor(threading.Thread):
                 )
             )
             or (
-                not review_config.detections.labels
-                or obj.obj_data["label"] in review_config.detections.labels
-            )
-            and (
-                not review_config.detections.required_zones
-                or set(obj.entered_zones) & set(review_config.alerts.required_zones)
+                (
+                    not review_config.detections.labels
+                    or obj.obj_data["label"] in review_config.detections.labels
+                )
+                and (
+                    not review_config.detections.required_zones
+                    or set(obj.entered_zones) & set(review_config.alerts.required_zones)
+                )
             )
         ):
             logger.debug(

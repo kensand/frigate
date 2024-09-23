@@ -15,7 +15,7 @@ from frigate.models import Event
 # Squelch posthog logging
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
 
-# Hotsawp the sqlite3 module for Chroma compatibility
+# Hot-swap the sqlite3 module for Chroma compatibility
 try:
     from chromadb import Collection
     from chromadb import HttpClient as ChromaClient
@@ -85,7 +85,10 @@ class Embeddings:
     @property
     def description(self) -> Collection:
         return self.client.get_or_create_collection(
-            name="event_description", embedding_function=MiniLMEmbedding()
+            name="event_description",
+            embedding_function=MiniLMEmbedding(
+                preferred_providers=["CPUExecutionProvider"]
+            ),
         )
 
     def reindex(self) -> None:
@@ -123,9 +126,9 @@ class Embeddings:
                 thumbnails["ids"].append(event.id)
                 thumbnails["images"].append(img)
                 thumbnails["metadatas"].append(metadata)
-                if event.data.get("description") is not None:
+                if description := event.data.get("description", "").strip():
                     descriptions["ids"].append(event.id)
-                    descriptions["documents"].append(event.data["description"])
+                    descriptions["documents"].append(description)
                     descriptions["metadatas"].append(metadata)
 
             if len(thumbnails["ids"]) > 0:

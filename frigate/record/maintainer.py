@@ -90,9 +90,9 @@ class RecordingMaintainer(threading.Thread):
             try:
                 if process.name() != "ffmpeg":
                     continue
-                flist = process.open_files()
-                if flist:
-                    for nt in flist:
+                file_list = process.open_files()
+                if file_list:
+                    for nt in file_list:
                         if nt.path.startswith(CACHE_DIR):
                             files_in_use.append(nt.path.split("/")[-1])
             except psutil.Error:
@@ -209,7 +209,9 @@ class RecordingMaintainer(threading.Thread):
         if cache_path in self.end_time_cache:
             end_time, duration = self.end_time_cache[cache_path]
         else:
-            segment_info = await get_video_properties(cache_path, get_duration=True)
+            segment_info = await get_video_properties(
+                self.config.ffmpeg, cache_path, get_duration=True
+            )
 
             if segment_info["duration"]:
                 duration = float(segment_info["duration"])
@@ -387,7 +389,7 @@ class RecordingMaintainer(threading.Thread):
 
                 # add faststart to kept segments to improve metadata reading
                 p = await asyncio.create_subprocess_exec(
-                    "ffmpeg",
+                    self.config.ffmpeg.ffmpeg_path,
                     "-hide_banner",
                     "-y",
                     "-i",

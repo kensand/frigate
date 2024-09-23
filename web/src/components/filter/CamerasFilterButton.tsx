@@ -1,6 +1,6 @@
 import { Button } from "../ui/button";
 import { CameraGroupConfig } from "@/types/frigateConfig";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,18 +17,52 @@ type CameraFilterButtonProps = {
   allCameras: string[];
   groups: [string, CameraGroupConfig][];
   selectedCameras: string[] | undefined;
+  hideText?: boolean;
   updateCameraFilter: (cameras: string[] | undefined) => void;
 };
 export function CamerasFilterButton({
   allCameras,
   groups,
   selectedCameras,
+  hideText = isMobile,
   updateCameraFilter,
 }: CameraFilterButtonProps) {
   const [open, setOpen] = useState(false);
   const [currentCameras, setCurrentCameras] = useState<string[] | undefined>(
-    selectedCameras,
+    selectedCameras === undefined ? [...allCameras] : selectedCameras,
   );
+  const [allCamerasSelected, setAllCamerasSelected] = useState(
+    selectedCameras === undefined,
+  );
+
+  const buttonText = useMemo(() => {
+    if (isMobile) {
+      return "Cameras";
+    }
+
+    if (allCamerasSelected) {
+      return "All Cameras";
+    }
+
+    if (!currentCameras || currentCameras.length === 0) {
+      return "No cameras";
+    }
+
+    return `${currentCameras.includes("birdseye") ? currentCameras.length - 1 : currentCameras.length} Camera${
+      currentCameras.length !== 1 ? "s" : ""
+    }`;
+  }, [allCamerasSelected, currentCameras]);
+
+  // ui
+
+  useEffect(() => {
+    setCurrentCameras(
+      selectedCameras === undefined ? [...allCameras] : selectedCameras,
+    );
+    setAllCamerasSelected(selectedCameras === undefined);
+    // only refresh when state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCameras]);
 
   const trigger = (
     <Button
@@ -40,11 +74,9 @@ export function CamerasFilterButton({
         className={`${(selectedCameras?.length ?? 0) >= 1 ? "text-selected-foreground" : "text-secondary-foreground"}`}
       />
       <div
-        className={`hidden md:block ${selectedCameras?.length ? "text-selected-foreground" : "text-primary"}`}
+        className={`${hideText ? "hidden" : ""} ${selectedCameras?.length ? "text-selected-foreground" : "text-primary"}`}
       >
-        {selectedCameras == undefined
-          ? "All Cameras"
-          : `${selectedCameras.includes("birdseye") ? selectedCameras.length - 1 : selectedCameras.length} Camera${selectedCameras.length !== 1 ? "s" : ""}`}
+        {buttonText}
       </div>
     </Button>
   );
@@ -58,24 +90,28 @@ export function CamerasFilterButton({
           <DropdownMenuSeparator />
         </>
       )}
-      <div className="scrollbar-container h-auto max-h-[80dvh] overflow-y-auto overflow-x-hidden p-4">
+      <div className="scrollbar-container flex h-auto max-h-[80dvh] flex-col gap-2 overflow-y-auto overflow-x-hidden p-4">
         <FilterSwitch
-          isChecked={currentCameras == undefined}
+          isChecked={allCamerasSelected}
           label="All Cameras"
           onCheckedChange={(isChecked) => {
+            setAllCamerasSelected(isChecked);
+
             if (isChecked) {
-              setCurrentCameras(undefined);
+              setCurrentCameras([...allCameras]);
+            } else {
+              setCurrentCameras([]);
             }
           }}
         />
         {groups.length > 0 && (
           <>
-            <DropdownMenuSeparator className="mt-2" />
+            <DropdownMenuSeparator />
             {groups.map(([name, conf]) => {
               return (
                 <div
                   key={name}
-                  className="w-full cursor-pointer rounded-lg px-2 py-1.5 text-sm capitalize text-primary hover:bg-muted"
+                  className="w-full cursor-pointer rounded-lg px-2 py-0.5 text-sm capitalize text-primary hover:bg-muted"
                   onClick={() => setCurrentCameras([...conf.cameras])}
                 >
                   {name}
@@ -84,7 +120,7 @@ export function CamerasFilterButton({
             })}
           </>
         )}
-        <DropdownMenuSeparator className="my-2" />
+        <DropdownMenuSeparator />
         <div className="flex flex-col gap-2.5">
           {allCameras.map((item) => (
             <FilterSwitch
@@ -96,31 +132,39 @@ export function CamerasFilterButton({
                   const updatedCameras = currentCameras
                     ? [...currentCameras]
                     : [];
-
                   updatedCameras.push(item);
                   setCurrentCameras(updatedCameras);
+
+                  // Check if all cameras are now selected
+                  setAllCamerasSelected(
+                    updatedCameras.length === allCameras.length,
+                  );
                 } else {
                   const updatedCameras = currentCameras
                     ? [...currentCameras]
                     : [];
+                  const index = updatedCameras.indexOf(item);
 
-                  // can not deselect the last item
-                  if (updatedCameras.length > 1) {
-                    updatedCameras.splice(updatedCameras.indexOf(item), 1);
+                  if (index > -1) {
+                    updatedCameras.splice(index, 1);
                     setCurrentCameras(updatedCameras);
                   }
+
+                  // Deselecting one camera should disable the "All Cameras" switch
+                  setAllCamerasSelected(false);
                 }
               }}
             />
           ))}
         </div>
       </div>
-      <DropdownMenuSeparator className="my-2" />
+      <DropdownMenuSeparator />
       <div className="flex items-center justify-evenly p-2">
         <Button
           variant="select"
+          disabled={currentCameras?.length === 0}
           onClick={() => {
-            updateCameraFilter(currentCameras);
+            updateCameraFilter(allCamerasSelected ? undefined : currentCameras);
             setOpen(false);
           }}
         >
@@ -128,7 +172,8 @@ export function CamerasFilterButton({
         </Button>
         <Button
           onClick={() => {
-            setCurrentCameras(undefined);
+            setCurrentCameras([...allCameras]);
+            setAllCamerasSelected(true);
             updateCameraFilter(undefined);
           }}
         >
@@ -144,7 +189,8 @@ export function CamerasFilterButton({
         open={open}
         onOpenChange={(open) => {
           if (!open) {
-            setCurrentCameras(selectedCameras);
+            setCurrentCameras(selectedCameras ?? allCameras);
+            setAllCamerasSelected(selectedCameras === undefined);
           }
 
           setOpen(open);
@@ -164,9 +210,9 @@ export function CamerasFilterButton({
       open={open}
       onOpenChange={(open) => {
         if (!open) {
-          setCurrentCameras(selectedCameras);
+          setCurrentCameras(selectedCameras ?? allCameras);
+          setAllCamerasSelected(selectedCameras === undefined);
         }
-
         setOpen(open);
       }}
     >
