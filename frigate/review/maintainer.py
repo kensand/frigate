@@ -20,7 +20,6 @@ from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeE
 from frigate.comms.inter_process import InterProcessRequestor
 from frigate.config import CameraConfig, FrigateConfig
 from frigate.const import (
-    ALL_ATTRIBUTE_LABELS,
     CLEAR_ONGOING_REVIEW_SEGMENTS,
     CLIPS_DIR,
     UPSERT_REVIEW_SEGMENT,
@@ -253,7 +252,7 @@ class ReviewSegmentMaintainer(threading.Thread):
             for object in active_objects:
                 if not object["sub_label"]:
                     segment.detections[object["id"]] = object["label"]
-                elif object["sub_label"][0] in ALL_ATTRIBUTE_LABELS:
+                elif object["sub_label"][0] in self.config.model.all_attributes:
                     segment.detections[object["id"]] = object["sub_label"][0]
                 else:
                     segment.detections[object["id"]] = f'{object["label"]}-verified'
@@ -292,6 +291,11 @@ class ReviewSegmentMaintainer(threading.Thread):
                     yuv_frame = self.frame_manager.get(
                         frame_id, camera_config.frame_shape_yuv
                     )
+
+                    if yuv_frame is None:
+                        logger.debug(f"Failed to get frame {frame_id} from SHM")
+                        return
+
                     self.update_segment(
                         segment, camera_config, yuv_frame, active_objects, prev_data
                     )
@@ -305,6 +309,11 @@ class ReviewSegmentMaintainer(threading.Thread):
                     yuv_frame = self.frame_manager.get(
                         frame_id, camera_config.frame_shape_yuv
                     )
+
+                    if yuv_frame is None:
+                        logger.debug(f"Failed to get frame {frame_id} from SHM")
+                        return
+
                     segment.save_full_frame(camera_config, yuv_frame)
                     self.frame_manager.close(frame_id)
                     self.update_segment(segment, camera_config, None, [], prev_data)
@@ -337,7 +346,7 @@ class ReviewSegmentMaintainer(threading.Thread):
             for object in active_objects:
                 if not object["sub_label"]:
                     detections[object["id"]] = object["label"]
-                elif object["sub_label"][0] in ALL_ATTRIBUTE_LABELS:
+                elif object["sub_label"][0] in self.config.model.all_attributes:
                     detections[object["id"]] = object["sub_label"][0]
                 else:
                     detections[object["id"]] = f'{object["label"]}-verified'
@@ -401,6 +410,11 @@ class ReviewSegmentMaintainer(threading.Thread):
                     yuv_frame = self.frame_manager.get(
                         frame_id, camera_config.frame_shape_yuv
                     )
+
+                    if yuv_frame is None:
+                        logger.debug(f"Failed to get frame {frame_id} from SHM")
+                        return
+
                     self.active_review_segments[camera].update_frame(
                         camera_config, yuv_frame, active_objects
                     )
@@ -424,7 +438,7 @@ class ReviewSegmentMaintainer(threading.Thread):
                 camera_name = updated_topic.rpartition("/")[-1]
                 self.config.cameras[camera_name].record = updated_record_config
 
-            (topic, data) = self.detection_subscriber.get_data(timeout=1)
+            (topic, data) = self.detection_subscriber.check_for_update(timeout=1)
 
             if not topic:
                 continue

@@ -11,12 +11,11 @@ import time
 import cv2
 from setproctitle import setproctitle
 
+from frigate.camera import CameraMetrics, PTZMetrics
 from frigate.comms.config_updater import ConfigSubscriber
 from frigate.comms.inter_process import InterProcessRequestor
 from frigate.config import CameraConfig, DetectConfig, ModelConfig
 from frigate.const import (
-    ALL_ATTRIBUTE_LABELS,
-    ATTRIBUTE_LABEL_MAP,
     CACHE_DIR,
     CACHE_SEGMENT_FORMAT,
     REQUEST_REGION_GRID,
@@ -28,7 +27,6 @@ from frigate.object_detection import RemoteObjectDetector
 from frigate.ptz.autotrack import ptz_moving_at_frame_time
 from frigate.track import ObjectTracker
 from frigate.track.norfair_tracker import NorfairTracker
-from frigate.types import PTZMetricsTypes
 from frigate.util.builtin import EventsPerSecond, get_tomorrow_at_time
 from frigate.util.image import (
     FrameManager,
@@ -94,7 +92,8 @@ def start_or_restart_ffmpeg(
 
 def capture_frames(
     ffmpeg_process,
-    camera_name,
+    config: CameraConfig,
+    shm_frame_count: int,
     frame_shape,
     frame_manager: FrameManager,
     frame_queue,
@@ -108,27 +107,40 @@ def capture_frames(
     frame_rate.start()
     skipped_eps = EventsPerSecond()
     skipped_eps.start()
+
+    shm_frames: list[str] = []
+
     while True:
         fps.value = frame_rate.eps()
         skipped_fps.value = skipped_eps.eps()
-
         current_frame.value = datetime.datetime.now().timestamp()
-        frame_name = f"{camera_name}{current_frame.value}"
+        frame_name = f"{config.name}{current_frame.value}"
         frame_buffer = frame_manager.create(frame_name, frame_size)
         try:
             frame_buffer[:] = ffmpeg_process.stdout.read(frame_size)
+
+            # update frame cache and cleanup existing frames
+            shm_frames.append(frame_name)
+
+            if len(shm_frames) > shm_frame_count:
+                expired_frame_name = shm_frames.pop(0)
+                frame_manager.delete(expired_frame_name)
         except Exception:
+            # always delete the frame
+            frame_manager.delete(frame_name)
+
             # shutdown has been initiated
             if stop_event.is_set():
                 break
-            logger.error(f"{camera_name}: Unable to read frames from ffmpeg process.")
+
+            logger.error(f"{config.name}: Unable to read frames from ffmpeg process.")
 
             if ffmpeg_process.poll() is not None:
                 logger.error(
-                    f"{camera_name}: ffmpeg process is not running. exiting capture thread..."
+                    f"{config.name}: ffmpeg process is not running. exiting capture thread..."
                 )
-                frame_manager.delete(frame_name)
                 break
+
             continue
 
         frame_rate.update()
@@ -137,12 +149,14 @@ def capture_frames(
         try:
             # add to the queue
             frame_queue.put(current_frame.value, False)
-            # close the frame
             frame_manager.close(frame_name)
         except queue.Full:
             # if the queue is full, skip this frame
             skipped_eps.update()
-            frame_manager.delete(frame_name)
+
+    # clear out frames
+    for frame in shm_frames:
+        frame_manager.delete(frame)
 
 
 class CameraWatchdog(threading.Thread):
@@ -150,6 +164,7 @@ class CameraWatchdog(threading.Thread):
         self,
         camera_name,
         config: CameraConfig,
+        shm_frame_count: int,
         frame_queue,
         camera_fps,
         skipped_fps,
@@ -160,6 +175,7 @@ class CameraWatchdog(threading.Thread):
         self.logger = logging.getLogger(f"watchdog.{camera_name}")
         self.camera_name = camera_name
         self.config = config
+        self.shm_frame_count = shm_frame_count
         self.capture_thread = None
         self.ffmpeg_detect_process = None
         self.logpipe = LogPipe(f"ffmpeg.{self.camera_name}.detect")
@@ -170,6 +186,7 @@ class CameraWatchdog(threading.Thread):
         self.frame_queue = frame_queue
         self.frame_shape = self.config.frame_shape_yuv
         self.frame_size = self.frame_shape[0] * self.frame_shape[1]
+        self.fps_overflow_count = 0
         self.stop_event = stop_event
         self.sleeptime = self.config.ffmpeg.retry_interval
 
@@ -219,18 +236,25 @@ class CameraWatchdog(threading.Thread):
                     self.ffmpeg_detect_process.kill()
                     self.ffmpeg_detect_process.communicate()
             elif self.camera_fps.value >= (self.config.detect.fps + 10):
-                self.camera_fps.value = 0
-                self.logger.info(
-                    f"{self.camera_name} exceeded fps limit. Exiting ffmpeg..."
-                )
-                self.ffmpeg_detect_process.terminate()
-                try:
-                    self.logger.info("Waiting for ffmpeg to exit gracefully...")
-                    self.ffmpeg_detect_process.communicate(timeout=30)
-                except sp.TimeoutExpired:
-                    self.logger.info("FFmpeg did not exit. Force killing...")
-                    self.ffmpeg_detect_process.kill()
-                    self.ffmpeg_detect_process.communicate()
+                self.fps_overflow_count += 1
+
+                if self.fps_overflow_count == 3:
+                    self.fps_overflow_count = 0
+                    self.camera_fps.value = 0
+                    self.logger.info(
+                        f"{self.camera_name} exceeded fps limit. Exiting ffmpeg..."
+                    )
+                    self.ffmpeg_detect_process.terminate()
+                    try:
+                        self.logger.info("Waiting for ffmpeg to exit gracefully...")
+                        self.ffmpeg_detect_process.communicate(timeout=30)
+                    except sp.TimeoutExpired:
+                        self.logger.info("FFmpeg did not exit. Force killing...")
+                        self.ffmpeg_detect_process.kill()
+                        self.ffmpeg_detect_process.communicate()
+            else:
+                # process is running normally
+                self.fps_overflow_count = 0
 
             for p in self.ffmpeg_other_processes:
                 poll = p["process"].poll()
@@ -282,7 +306,8 @@ class CameraWatchdog(threading.Thread):
         )
         self.ffmpeg_pid.value = self.ffmpeg_detect_process.pid
         self.capture_thread = CameraCapture(
-            self.camera_name,
+            self.config,
+            self.shm_frame_count,
             self.ffmpeg_detect_process,
             self.frame_shape,
             self.frame_queue,
@@ -321,7 +346,8 @@ class CameraWatchdog(threading.Thread):
 class CameraCapture(threading.Thread):
     def __init__(
         self,
-        camera_name,
+        config: CameraConfig,
+        shm_frame_count: int,
         ffmpeg_process,
         frame_shape,
         frame_queue,
@@ -330,8 +356,9 @@ class CameraCapture(threading.Thread):
         stop_event,
     ):
         threading.Thread.__init__(self)
-        self.name = f"capture:{camera_name}"
-        self.camera_name = camera_name
+        self.name = f"capture:{config.name}"
+        self.config = config
+        self.shm_frame_count = shm_frame_count
         self.frame_shape = frame_shape
         self.frame_queue = frame_queue
         self.fps = fps
@@ -345,7 +372,8 @@ class CameraCapture(threading.Thread):
     def run(self):
         capture_frames(
             self.ffmpeg_process,
-            self.camera_name,
+            self.config,
+            self.shm_frame_count,
             self.frame_shape,
             self.frame_manager,
             self.frame_queue,
@@ -356,11 +384,12 @@ class CameraCapture(threading.Thread):
         )
 
 
-def capture_camera(name, config: CameraConfig, process_info):
+def capture_camera(
+    name, config: CameraConfig, shm_frame_count: int, camera_metrics: CameraMetrics
+):
     stop_event = mp.Event()
 
     def receiveSignal(signalNumber, frame):
-        logger.debug(f"Capture camera received signal {signalNumber}")
         stop_event.set()
 
     signal.signal(signal.SIGTERM, receiveSignal)
@@ -369,14 +398,14 @@ def capture_camera(name, config: CameraConfig, process_info):
     threading.current_thread().name = f"capture:{name}"
     setproctitle(f"frigate.capture:{name}")
 
-    frame_queue = process_info["frame_queue"]
     camera_watchdog = CameraWatchdog(
         name,
         config,
-        frame_queue,
-        process_info["camera_fps"],
-        process_info["skipped_fps"],
-        process_info["ffmpeg_pid"],
+        shm_frame_count,
+        camera_metrics.frame_queue,
+        camera_metrics.camera_fps,
+        camera_metrics.skipped_fps,
+        camera_metrics.ffmpeg_pid,
         stop_event,
     )
     camera_watchdog.start()
@@ -391,8 +420,8 @@ def track_camera(
     detection_queue,
     result_connection,
     detected_objects_queue,
-    process_info,
-    ptz_metrics,
+    camera_metrics: CameraMetrics,
+    ptz_metrics: PTZMetrics,
     region_grid,
 ):
     stop_event = mp.Event()
@@ -407,7 +436,7 @@ def track_camera(
     setproctitle(f"frigate.process:{name}")
     listen()
 
-    frame_queue = process_info["frame_queue"]
+    frame_queue = camera_metrics.frame_queue
 
     frame_shape = config.frame_shape
     objects_to_track = config.objects.track
@@ -439,7 +468,7 @@ def track_camera(
         object_detector,
         object_tracker,
         detected_objects_queue,
-        process_info,
+        camera_metrics,
         objects_to_track,
         object_filters,
         stop_event,
@@ -512,17 +541,14 @@ def process_frames(
     object_detector: RemoteObjectDetector,
     object_tracker: ObjectTracker,
     detected_objects_queue: mp.Queue,
-    process_info: dict,
+    camera_metrics: CameraMetrics,
     objects_to_track: list[str],
     object_filters,
     stop_event,
-    ptz_metrics: PTZMetricsTypes,
+    ptz_metrics: PTZMetrics,
     region_grid,
     exit_on_empty: bool = False,
 ):
-    fps = process_info["process_fps"]
-    detection_fps = process_info["detection_fps"]
-    current_frame_time = process_info["detection_frame"]
     next_region_update = get_tomorrow_at_time(2)
     config_subscriber = ConfigSubscriber(f"config/detect/{camera_name}")
 
@@ -559,15 +585,15 @@ def process_frames(
                 break
             continue
 
-        current_frame_time.value = frame_time
-        ptz_metrics["ptz_frame_time"].value = frame_time
+        camera_metrics.detection_frame.value = frame_time
+        ptz_metrics.frame_time.value = frame_time
 
         frame = frame_manager.get(
             f"{camera_name}{frame_time}", (frame_shape[0] * 3 // 2, frame_shape[1])
         )
 
         if frame is None:
-            logger.info(f"{camera_name}: frame {frame_time} is not in memory store.")
+            logger.debug(f"{camera_name}: frame {frame_time} is not in memory store.")
             continue
 
         # look for motion if enabled
@@ -630,8 +656,8 @@ def process_frames(
             # ptz_moving_at_frame_time() always returns False for non-autotracking cameras
             if not motion_detector.is_calibrating() and not ptz_moving_at_frame_time(
                 frame_time,
-                ptz_metrics["ptz_start_time"].value,
-                ptz_metrics["ptz_stop_time"].value,
+                ptz_metrics.start_time.value,
+                ptz_metrics.stop_time.value,
             ):
                 # find motion boxes that are not inside tracked object regions
                 standalone_motion_boxes = [
@@ -699,7 +725,7 @@ def process_frames(
                 tracked_detections = [
                     d
                     for d in consolidated_detections
-                    if d[0] not in ALL_ATTRIBUTE_LABELS
+                    if d[0] not in model_config.all_attributes
                 ]
                 # now that we have refined our detections, we need to track objects
                 object_tracker.match_and_update(frame_time, tracked_detections)
@@ -709,7 +735,7 @@ def process_frames(
 
         # group the attribute detections based on what label they apply to
         attribute_detections = {}
-        for label, attribute_labels in ATTRIBUTE_LABEL_MAP.items():
+        for label, attribute_labels in model_config.attributes_map.items():
             attribute_detections[label] = [
                 d for d in consolidated_detections if d[0] in attribute_labels
             ]
@@ -809,7 +835,7 @@ def process_frames(
             continue
         else:
             fps_tracker.update()
-            fps.value = fps_tracker.eps()
+            camera_metrics.process_fps.value = fps_tracker.eps()
             detected_objects_queue.put(
                 (
                     camera_name,
@@ -819,7 +845,7 @@ def process_frames(
                     regions,
                 )
             )
-            detection_fps.value = object_detector.fps.eps()
+            camera_metrics.detection_fps.value = object_detector.fps.eps()
             frame_manager.close(f"{camera_name}{frame_time}")
 
     motion_detector.stop()
