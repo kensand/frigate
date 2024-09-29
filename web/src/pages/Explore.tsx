@@ -1,14 +1,24 @@
+import { useEventUpdate } from "@/api/ws";
 import { useApiFilterArgs } from "@/hooks/use-api-filter";
+import { useTimezone } from "@/hooks/use-date-utils";
+import { FrigateConfig } from "@/types/frigateConfig";
 import { SearchFilter, SearchQuery, SearchResult } from "@/types/search";
 import SearchView from "@/views/search/SearchView";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TbExclamationCircle } from "react-icons/tb";
+import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
 
 const API_LIMIT = 25;
 
 export default function Explore() {
   // search field handler
+
+  const { data: config } = useSWR<FrigateConfig>("config", {
+    revalidateOnFocus: false,
+  });
+
+  const timezone = useTimezone(config);
 
   const [search, setSearch] = useState("");
 
@@ -60,13 +70,15 @@ export default function Explore() {
         {
           cameras: searchSearchParams["cameras"],
           labels: searchSearchParams["labels"],
-          sub_labels: searchSearchParams["subLabels"],
+          sub_labels: searchSearchParams["sub_labels"],
           zones: searchSearchParams["zones"],
           before: searchSearchParams["before"],
           after: searchSearchParams["after"],
+          time_range: searchSearchParams["time_range"],
           search_type: searchSearchParams["search_type"],
           limit:
             Object.keys(searchSearchParams).length == 0 ? API_LIMIT : undefined,
+          timezone,
           in_progress: 0,
           include_thumbnails: 0,
         },
@@ -84,16 +96,18 @@ export default function Explore() {
         query: similaritySearch ? undefined : searchTerm,
         cameras: searchSearchParams["cameras"],
         labels: searchSearchParams["labels"],
-        sub_labels: searchSearchParams["subLabels"],
+        sub_labels: searchSearchParams["sub_labels"],
         zones: searchSearchParams["zones"],
         before: searchSearchParams["before"],
         after: searchSearchParams["after"],
+        time_range: searchSearchParams["time_range"],
         search_type: searchSearchParams["search_type"],
         event_id: searchSearchParams["event_id"],
+        timezone,
         include_thumbnails: 0,
       },
     ];
-  }, [searchTerm, searchSearchParams, similaritySearch]);
+  }, [searchTerm, searchSearchParams, similaritySearch, timezone]);
 
   // paging
 
@@ -123,19 +137,19 @@ export default function Explore() {
     return [url, { ...params, limit: API_LIMIT }];
   };
 
-  const { data, size, setSize, isValidating } = useSWRInfinite<SearchResult[]>(
-    getKey,
-    {
-      revalidateFirstPage: true,
-      revalidateAll: false,
-      onLoadingSlow: () => {
-        if (!similaritySearch) {
-          setIsSlowLoading(true);
-        }
-      },
-      loadingTimeout: 10000,
+  const { data, size, setSize, isValidating, mutate } = useSWRInfinite<
+    SearchResult[]
+  >(getKey, {
+    revalidateFirstPage: true,
+    revalidateOnFocus: true,
+    revalidateAll: false,
+    onLoadingSlow: () => {
+      if (!similaritySearch) {
+        setIsSlowLoading(true);
+      }
     },
-  );
+    loadingTimeout: 15000,
+  });
 
   const searchResults = useMemo(
     () => (data ? ([] as SearchResult[]).concat(...data) : []),
@@ -163,6 +177,16 @@ export default function Explore() {
       setSize(size + 1);
     }
   }, [isReachingEnd, isLoadingMore, setSize, size, searchResults, searchQuery]);
+
+  // mutation and revalidation
+
+  const eventUpdate = useEventUpdate();
+
+  useEffect(() => {
+    mutate();
+    // mutate / revalidate when event description updates come in
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventUpdate]);
 
   return (
     <>

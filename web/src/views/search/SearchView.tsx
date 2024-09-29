@@ -23,6 +23,9 @@ import useKeyboardListener, {
 import scrollIntoView from "scroll-into-view-if-needed";
 import InputWithTags from "@/components/input/InputWithTags";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { isEqual } from "lodash";
+import { formatDateToLocaleString } from "@/utils/dateUtil";
+import { TooltipPortal } from "@radix-ui/react-tooltip";
 
 type SearchViewProps = {
   search: string;
@@ -113,6 +116,12 @@ export default function SearchView({
       zones: Object.values(allZones || {}),
       sub_labels: allSubLabels,
       search_type: ["thumbnail", "description"] as SearchSource[],
+      time_range:
+        config?.ui.time_format == "24hour"
+          ? ["00:00-23:59"]
+          : ["12:00AM-11:59PM"],
+      before: [formatDateToLocaleString()],
+      after: [formatDateToLocaleString(-5)],
     }),
     [config, allLabels, allZones, allSubLabels],
   );
@@ -140,6 +149,21 @@ export default function SearchView({
     setSelectedIndex(index);
   }, []);
 
+  // update search detail when results change
+
+  useEffect(() => {
+    if (searchDetail && searchResults) {
+      const flattenedResults = searchResults.flat();
+      const updatedSearchDetail = flattenedResults.find(
+        (result) => result.id === searchDetail.id,
+      );
+
+      if (updatedSearchDetail && !isEqual(updatedSearchDetail, searchDetail)) {
+        setSearchDetail(updatedSearchDetail);
+      }
+    }
+  }, [searchResults, searchDetail]);
+
   // confidence score - probably needs tweaking
 
   const zScoreToConfidence = (score: number, source: string) => {
@@ -166,9 +190,11 @@ export default function SearchView({
 
   // keyboard listener
 
+  const [inputFocused, setInputFocused] = useState(false);
+
   const onKeyboardShortcut = useCallback(
     (key: string | null, modifiers: KeyModifiers) => {
-      if (!modifiers.down || !uniqueResults) {
+      if (!modifiers.down || !uniqueResults || inputFocused) {
         return;
       }
 
@@ -193,10 +219,14 @@ export default function SearchView({
           break;
       }
     },
-    [uniqueResults],
+    [uniqueResults, inputFocused],
   );
 
-  useKeyboardListener(["ArrowLeft", "ArrowRight"], onKeyboardShortcut);
+  useKeyboardListener(
+    ["ArrowLeft", "ArrowRight"],
+    onKeyboardShortcut,
+    !inputFocused,
+  );
 
   // scroll into view
 
@@ -267,6 +297,8 @@ export default function SearchView({
         {config?.semantic_search?.enabled && (
           <div className={cn("z-[41] w-full lg:absolute lg:top-0 lg:w-1/3")}>
             <InputWithTags
+              inputFocused={inputFocused}
+              setInputFocused={setInputFocused}
               filters={searchFilter ?? {}}
               setFilters={setSearchFilter}
               search={search}
@@ -349,14 +381,16 @@ export default function SearchView({
                                 %
                               </Chip>
                             </TooltipTrigger>
-                            <TooltipContent>
-                              Matched {value.search_source} at{" "}
-                              {zScoreToConfidence(
-                                value.search_distance,
-                                value.search_source,
-                              )}
-                              %
-                            </TooltipContent>
+                            <TooltipPortal>
+                              <TooltipContent>
+                                Matched {value.search_source} at{" "}
+                                {zScoreToConfidence(
+                                  value.search_distance,
+                                  value.search_source,
+                                )}
+                                %
+                              </TooltipContent>
+                            </TooltipPortal>
                           </Tooltip>
                         </div>
                       )}
@@ -382,7 +416,10 @@ export default function SearchView({
         Object.keys(searchFilter).length === 0 &&
         !searchTerm && (
           <div className="scrollbar-container flex size-full flex-col overflow-y-auto">
-            <ExploreView onSelectSearch={onSelectSearch} />
+            <ExploreView
+              searchDetail={searchDetail}
+              setSearchDetail={setSearchDetail}
+            />
           </div>
         )}
     </div>

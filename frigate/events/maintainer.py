@@ -163,11 +163,11 @@ class EventProcessor(threading.Thread):
                 )
             )
 
-            attributes = [
-                (
-                    None
-                    if event_data["snapshot"] is None
-                    else {
+            attributes = (
+                None
+                if event_data["snapshot"] is None
+                else [
+                    {
                         "box": to_relative_box(
                             width,
                             height,
@@ -176,9 +176,9 @@ class EventProcessor(threading.Thread):
                         "label": a["label"],
                         "score": a["score"],
                     }
-                )
-                for a in event_data["snapshot"]["attributes"]
-            ]
+                    for a in event_data["snapshot"]["attributes"]
+                ]
+            )
 
             # keep these from being set back to false because the event
             # may have started while recordings and snapshots were enabled

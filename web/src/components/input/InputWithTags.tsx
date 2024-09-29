@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   LuX,
   LuFilter,
@@ -35,11 +35,18 @@ import { SaveSearchDialog } from "./SaveSearchDialog";
 import { DeleteSearchDialog } from "./DeleteSearchDialog";
 import {
   convertLocalDateToTimestamp,
+  convertTo12Hour,
   getIntlDateFormat,
+  isValidTimeRange,
+  to24Hour,
 } from "@/utils/dateUtil";
 import { toast } from "sonner";
+import useSWR from "swr";
+import { FrigateConfig } from "@/types/frigateConfig";
 
 type InputWithTagsProps = {
+  inputFocused: boolean;
+  setInputFocused: React.Dispatch<React.SetStateAction<boolean>>;
   filters: SearchFilter;
   setFilters: (filter: SearchFilter) => void;
   search: string;
@@ -50,17 +57,22 @@ type InputWithTagsProps = {
 };
 
 export default function InputWithTags({
+  inputFocused,
+  setInputFocused,
   filters,
   setFilters,
   search,
   setSearch,
   allSuggestions,
 }: InputWithTagsProps) {
+  const { data: config } = useSWR<FrigateConfig>("config", {
+    revalidateOnFocus: false,
+  });
+
   const [inputValue, setInputValue] = useState(search || "");
   const [currentFilterType, setCurrentFilterType] = useState<FilterType | null>(
     null,
   );
-  const [inputFocused, setInputFocused] = useState(false);
   const [isSimilaritySearch, setIsSimilaritySearch] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const commandRef = useRef<HTMLDivElement>(null);
@@ -180,7 +192,12 @@ export default function InputWithTags({
 
   const createFilter = useCallback(
     (type: FilterType, value: string) => {
-      if (allSuggestions[type as FilterType]?.includes(value)) {
+      if (
+        allSuggestions[type as FilterType]?.includes(value) ||
+        type == "before" ||
+        type == "after" ||
+        type == "time_range"
+      ) {
         const newFilters = { ...filters };
         let timestamp = 0;
 
@@ -222,6 +239,9 @@ export default function InputWithTags({
               newFilters[type] = timestamp / 1000;
             }
             break;
+          case "time_range":
+            newFilters[type] = value;
+            break;
           case "search_type":
             if (!newFilters.search_type) newFilters.search_type = [];
             if (
@@ -256,6 +276,32 @@ export default function InputWithTags({
     [filters, setFilters, allSuggestions],
   );
 
+  function formatFilterValues(
+    filterType: string,
+    filterValues: number | string,
+  ): string {
+    if (filterType === "before" || filterType === "after") {
+      return new Date(
+        (filterType === "before"
+          ? (filterValues as number) + 1
+          : (filterValues as number)) * 1000,
+      ).toLocaleDateString(window.navigator?.language || "en-US");
+    } else if (filterType === "time_range") {
+      const [startTime, endTime] = (filterValues as string)
+        .replace("-", ",")
+        .split(",");
+      return `${
+        config?.ui.time_format === "24hour"
+          ? startTime
+          : convertTo12Hour(startTime)
+      } - ${
+        config?.ui.time_format === "24hour" ? endTime : convertTo12Hour(endTime)
+      }`;
+    } else {
+      return filterValues as string;
+    }
+  }
+
   // handlers
 
   const handleFilterCreation = useCallback(
@@ -264,9 +310,23 @@ export default function InputWithTags({
       if (
         allSuggestions[filterType]?.includes(trimmedValue) ||
         ((filterType === "before" || filterType === "after") &&
-          trimmedValue.match(/^\d{8}$/))
+          trimmedValue.match(/^\d{8}$/)) ||
+        (filterType === "time_range" &&
+          isValidTimeRange(
+            trimmedValue.replace("-", ","),
+            config?.ui.time_format,
+          ))
       ) {
-        createFilter(filterType, trimmedValue);
+        createFilter(
+          filterType,
+          filterType === "time_range"
+            ? trimmedValue
+                .replace("-", ",")
+                .split(",")
+                .map((time) => to24Hour(time.trim(), config?.ui.time_format))
+                .join(",")
+            : trimmedValue,
+        );
         setInputValue((prev) => {
           const regex = new RegExp(
             `${filterType}:${filterValue.trim()}[,\\s]*`,
@@ -279,7 +339,7 @@ export default function InputWithTags({
         setCurrentFilterType(null);
       }
     },
-    [allSuggestions, createFilter],
+    [allSuggestions, createFilter, config],
   );
 
   const handleInputChange = useCallback(
@@ -303,25 +363,14 @@ export default function InputWithTags({
         ];
 
         // Check if filter type is valid
-        if (
-          filterType in allSuggestions ||
-          filterType === "before" ||
-          filterType === "after"
-        ) {
+        if (filterType in allSuggestions) {
           setCurrentFilterType(filterType);
 
-          if (filterType === "before" || filterType === "after") {
-            // For before and after, we don't need to update suggestions
-            if (filterValue.match(/^\d{8}$/)) {
-              handleFilterCreation(filterType, filterValue);
-            }
-          } else {
-            updateSuggestions(filterValue, filterType);
+          updateSuggestions(filterValue, filterType);
 
-            // Check if the last character is a space or comma
-            if (isLastCharSpaceOrComma) {
-              handleFilterCreation(filterType, filterValue);
-            }
+          // Check if the last character is a space or comma
+          if (isLastCharSpaceOrComma) {
+            handleFilterCreation(filterType, filterValue);
           }
         } else {
           resetSuggestions(value);
@@ -335,7 +384,7 @@ export default function InputWithTags({
 
   const handleInputFocus = useCallback(() => {
     setInputFocused(true);
-  }, []);
+  }, [setInputFocused]);
 
   const handleClearInput = useCallback(() => {
     setInputFocused(false);
@@ -346,21 +395,31 @@ export default function InputWithTags({
     setFilters({});
     setCurrentFilterType(null);
     setIsSimilaritySearch(false);
-  }, [setFilters, resetSuggestions, setSearch]);
+  }, [setFilters, resetSuggestions, setSearch, setInputFocused]);
 
-  const handleInputBlur = useCallback((e: React.FocusEvent) => {
-    if (
-      commandRef.current &&
-      !commandRef.current.contains(e.relatedTarget as Node)
-    ) {
-      setInputFocused(false);
-    }
-  }, []);
+  const handleInputBlur = useCallback(
+    (e: React.FocusEvent) => {
+      if (
+        commandRef.current &&
+        !commandRef.current.contains(e.relatedTarget as Node)
+      ) {
+        setInputFocused(false);
+      }
+    },
+    [setInputFocused],
+  );
 
   const handleSuggestionClick = useCallback(
     (suggestion: string) => {
       if (currentFilterType) {
         // Apply the selected suggestion to the current filter type
+        if (currentFilterType == "time_range") {
+          suggestion = suggestion
+            .replace("-", ",")
+            .split(",")
+            .map((time) => to24Hour(time.trim(), config?.ui.time_format))
+            .join(",");
+        }
         createFilter(currentFilterType, suggestion);
         setInputValue((prev) => {
           const regex = new RegExp(`${currentFilterType}:[^\\s,]*`, "g");
@@ -387,7 +446,7 @@ export default function InputWithTags({
 
       inputRef.current?.focus();
     },
-    [createFilter, currentFilterType, allSuggestions],
+    [createFilter, currentFilterType, allSuggestions, config],
   );
 
   const handleSearch = useCallback(
@@ -396,7 +455,7 @@ export default function InputWithTags({
       setInputFocused(false);
       inputRef?.current?.blur();
     },
-    [setSearch],
+    [setSearch, setInputFocused],
   );
 
   const handleInputKeyDown = useCallback(
@@ -513,7 +572,7 @@ export default function InputWithTags({
                   <h3 className="font-medium">How to use text filters</h3>
                   <p className="text-sm text-muted-foreground">
                     Filters help you narrow down your search results. Here's how
-                    to use them:
+                    to use them in the input field:
                   </p>
                   <ul className="list-disc pl-5 text-sm text-primary-variant">
                     <li>
@@ -523,11 +582,21 @@ export default function InputWithTags({
                       Select a value from the suggestions or type your own.
                     </li>
                     <li>
-                      Use multiple filters by adding them one after another.
+                      Use multiple filters by adding them one after another with
+                      a space in between.
                     </li>
                     <li>
                       Date filters (before: and after:) use{" "}
-                      {getIntlDateFormat()} format.
+                      <em>{getIntlDateFormat()}</em> format.
+                    </li>
+                    <li>
+                      Time range filter uses{" "}
+                      <em>
+                        {config?.ui.time_format == "24hour"
+                          ? "15:00-16:00"
+                          : "3:00PM-4:00PM"}{" "}
+                      </em>
+                      format.
                     </li>
                     <li>Remove filters by clicking the 'x' next to them.</li>
                   </ul>
@@ -535,6 +604,7 @@ export default function InputWithTags({
                     Example:{" "}
                     <code className="text-primary">
                       cameras:front_door label:person before:01012024
+                      time_range:3:00PM-4:00PM
                     </code>
                   </p>
                 </div>
@@ -604,16 +674,8 @@ export default function InputWithTags({
                           key={filterType}
                           className="inline-flex items-center whitespace-nowrap rounded-full bg-green-100 px-2 py-0.5 text-sm capitalize text-green-800"
                         >
-                          {filterType}:
-                          {filterType === "before" || filterType === "after"
-                            ? new Date(
-                                (filterType === "before"
-                                  ? (filterValues as number) + 1
-                                  : (filterValues as number)) * 1000,
-                              ).toLocaleDateString(
-                                window.navigator?.language || "en-US",
-                              )
-                            : filterValues}
+                          {filterType.replaceAll("_", " ")}:{" "}
+                          {formatFilterValues(filterType, filterValues)}
                           <button
                             onClick={() =>
                               removeFilter(

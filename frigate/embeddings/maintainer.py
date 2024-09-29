@@ -12,6 +12,10 @@ import numpy as np
 from peewee import DoesNotExist
 from PIL import Image
 
+from frigate.comms.event_metadata_updater import (
+    EventMetadataSubscriber,
+    EventMetadataTypeEnum,
+)
 from frigate.comms.events_updater import EventEndSubscriber, EventUpdateSubscriber
 from frigate.comms.inter_process import InterProcessRequestor
 from frigate.config import FrigateConfig
@@ -40,6 +44,9 @@ class EmbeddingMaintainer(threading.Thread):
         self.embeddings = Embeddings()
         self.event_subscriber = EventUpdateSubscriber()
         self.event_end_subscriber = EventEndSubscriber()
+        self.event_metadata_subscriber = EventMetadataSubscriber(
+            EventMetadataTypeEnum.regenerate_description
+        )
         self.frame_manager = SharedMemoryFrameManager()
         # create communication for updating event descriptions
         self.requestor = InterProcessRequestor()
@@ -52,9 +59,11 @@ class EmbeddingMaintainer(threading.Thread):
         while not self.stop_event.is_set():
             self._process_updates()
             self._process_finalized()
+            self._process_event_metadata()
 
         self.event_subscriber.stop()
         self.event_end_subscriber.stop()
+        self.event_metadata_subscriber.stop()
         self.requestor.stop()
         logger.info("Exiting embeddings maintenance...")
 
@@ -118,6 +127,14 @@ class EmbeddingMaintainer(threading.Thread):
                     camera_config.genai.enabled
                     and self.genai_client is not None
                     and event.data.get("description") is None
+                    and (
+                        not camera_config.genai.objects
+                        or event.label in camera_config.genai.objects
+                    )
+                    and (
+                        not camera_config.genai.required_zones
+                        or set(event.zones) & set(camera_config.genai.required_zones)
+                    )
                 ):
                     # Generate the description. Call happens in a thread since it is network bound.
                     threading.Thread(
@@ -139,6 +156,16 @@ class EmbeddingMaintainer(threading.Thread):
             # Delete tracked events based on the event_id
             if event_id in self.tracked_events:
                 del self.tracked_events[event_id]
+
+    def _process_event_metadata(self):
+        # Check for regenerate description requests
+        (topic, event_id) = self.event_metadata_subscriber.check_for_update(timeout=1)
+
+        if topic is None:
+            return
+
+        if event_id:
+            self.handle_regenerate_description(event_id)
 
     def _create_thumbnail(self, yuv_frame, box, height=500) -> Optional[bytes]:
         """Return jpg thumbnail of a region of the frame."""
@@ -200,3 +227,20 @@ class EmbeddingMaintainer(threading.Thread):
             len(thumbnails),
             description,
         )
+
+    def handle_regenerate_description(self, event_id: str) -> None:
+        try:
+            event: Event = Event.get(Event.id == event_id)
+        except DoesNotExist:
+            logger.error(f"Event {event_id} not found for description regeneration")
+            return
+
+        camera_config = self.config.cameras[event.camera]
+        if not camera_config.genai.enabled or self.genai_client is None:
+            logger.error(f"GenAI not enabled for camera {event.camera}")
+            return
+
+        metadata = get_metadata(event)
+        thumbnail = base64.b64decode(event.thumbnail)
+
+        self._embed_description(event, [thumbnail], metadata)
