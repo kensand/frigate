@@ -108,7 +108,12 @@ def is_better_thumbnail(label, current_thumb, new_obj, frame_shape) -> bool:
 
 class TrackedObject:
     def __init__(
-        self, camera, colormap, camera_config: CameraConfig, frame_cache, obj_data
+        self,
+        camera,
+        colormap,
+        camera_config: CameraConfig,
+        frame_cache,
+        obj_data: dict[str, any],
     ):
         # set the score history then remove as it is not part of object state
         self.score_history = obj_data["score_history"]
@@ -133,6 +138,7 @@ class TrackedObject:
         self.last_published = 0
         self.frame = None
         self.active = True
+        self.pending_loitering = False
         self.previous = self.to_dict()
 
     def _is_false_positive(self):
@@ -189,6 +195,8 @@ class TrackedObject:
         # check zones
         current_zones = []
         bottom_center = (obj_data["centroid"][0], obj_data["box"][3])
+        in_loitering_zone = False
+
         # check each zone
         for name, zone in self.camera_config.zones.items():
             # if the zone is not for this object type, skip
@@ -202,6 +210,10 @@ class TrackedObject:
                 if name in self.current_zones or not zone_filtered(self, zone.filters):
                     # an object is only considered present in a zone if it has a zone inertia of 3+
                     if zone_score >= zone.inertia:
+                        # if the zone has loitering time, update loitering status
+                        if zone.loitering_time > 0:
+                            in_loitering_zone = True
+
                         loitering_score = self.zone_loitering.get(name, 0) + 1
 
                         # loitering time is configured as seconds, convert to count of frames
@@ -222,13 +234,16 @@ class TrackedObject:
                 if 0 < zone_score < zone.inertia:
                     self.zone_presence[name] = zone_score - 1
 
+        # update loitering status
+        self.pending_loitering = in_loitering_zone
+
         # maintain attributes
         for attr in obj_data["attributes"]:
             if self.attributes[attr["label"]] < attr["score"]:
                 self.attributes[attr["label"]] = attr["score"]
 
-        # populate the sub_label for car with highest scoring logo
-        if self.obj_data["label"] == "car":
+        # populate the sub_label for object with highest scoring logo
+        if self.obj_data["label"] in ["car", "package", "person"]:
             recognized_logos = {
                 k: self.attributes[k]
                 for k in ["ups", "fedex", "amazon"]
@@ -236,7 +251,13 @@ class TrackedObject:
             }
             if len(recognized_logos) > 0:
                 max_logo = max(recognized_logos, key=recognized_logos.get)
-                self.obj_data["sub_label"] = (max_logo, recognized_logos[max_logo])
+
+                # don't overwrite sub label if it is already set
+                if (
+                    self.obj_data.get("sub_label") is None
+                    or self.obj_data["sub_label"][0] == max_logo
+                ):
+                    self.obj_data["sub_label"] = (max_logo, recognized_logos[max_logo])
 
         # check for significant change
         if not self.false_positive:
@@ -294,6 +315,7 @@ class TrackedObject:
             "has_snapshot": self.has_snapshot,
             "attributes": self.attributes,
             "current_attributes": self.obj_data["attributes"],
+            "pending_loitering": self.pending_loitering,
         }
 
         if include_thumbnail:
@@ -921,8 +943,7 @@ class TrackedObjectProcessor(threading.Thread):
         ptz_autotracker_thread,
         stop_event,
     ):
-        threading.Thread.__init__(self)
-        self.name = "detected_frames_processor"
+        super().__init__(name="detected_frames_processor")
         self.config = config
         self.dispatcher = dispatcher
         self.tracked_objects_queue = tracked_objects_queue

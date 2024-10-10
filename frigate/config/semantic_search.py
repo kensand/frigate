@@ -12,3 +12,7 @@ class SemanticSearchConfig(FrigateBaseModel):
     reindex: Optional[bool] = Field(
         default=False, title="Reindex all detections on startup."
     )
+    device: str = Field(default="AUTO", title="Device Type")
+    model_size: str = Field(
+        default="small", title="The size of the embeddings model used."
+    )

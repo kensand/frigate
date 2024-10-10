@@ -5,7 +5,7 @@ title: Using Semantic Search
 
 Semantic Search in Frigate allows you to find tracked objects within your review items using either the image itself, a user-defined text description, or an automatically generated one. This feature works by creating _embeddings_ — numerical vector representations — for both the images and text descriptions of your tracked objects. By comparing these embeddings, Frigate assesses their similarities to deliver relevant search results.
 
-Frigate has support for two models to create embeddings, both of which run locally: [OpenAI CLIP](https://openai.com/research/clip) and [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2). Embeddings are then saved to a local instance of [ChromaDB](https://trychroma.com).
+Frigate has support for [Jina AI's CLIP model](https://huggingface.co/jinaai/jina-clip-v1) to create embeddings, which runs locally. Embeddings are then saved to Frigate's database.
 
 Semantic Search is accessed via the _Explore_ view in the Frigate UI.
 
@@ -27,13 +27,27 @@ If you are enabling the Search feature for the first time, be advised that Friga
 
 :::
 
-### OpenAI CLIP
+### Jina AI CLIP
 
-This model is able to embed both images and text into the same vector space, which allows `image -> image` and `text -> image` similarity searches. Frigate uses this model on tracked objects to encode the thumbnail image and store it in Chroma. When searching for tracked objects via text in the search box, Frigate will perform a `text -> image` similarity search against this embedding. When clicking "Find Similar" in the tracked object detail pane, Frigate will perform an `image -> image` similarity search to retrieve the closest matching thumbnails.
+:::tip
 
-### all-MiniLM-L6-v2
+The CLIP models are downloaded in ONNX format, which means they will be accelerated using GPU hardware when available. This depends on the Docker build that is used. See [the object detector docs](../configuration/object_detectors.md) for more information.
 
-This is a sentence embedding model that has been fine tuned on over 1 billion sentence pairs. This model is used to embed tracked object descriptions and perform searches against them. Descriptions can be created, viewed, and modified on the Search page when clicking on the gray tracked object chip at the top left of each review item. See [the Generative AI docs](/configuration/genai.md) for more information on how to automatically generate tracked object descriptions.
+:::
+
+The vision model is able to embed both images and text into the same vector space, which allows `image -> image` and `text -> image` similarity searches. Frigate uses this model on tracked objects to encode the thumbnail image and store it in the database. When searching for tracked objects via text in the search box, Frigate will perform a `text -> image` similarity search against this embedding. When clicking "Find Similar" in the tracked object detail pane, Frigate will perform an `image -> image` similarity search to retrieve the closest matching thumbnails.
+
+The text model is used to embed tracked object descriptions and perform searches against them. Descriptions can be created, viewed, and modified on the Search page when clicking on the gray tracked object chip at the top left of each review item. See [the Generative AI docs](/configuration/genai.md) for more information on how to automatically generate tracked object descriptions.
+
+Differently weighted CLIP models are available and can be selected by setting the `model_size` config option:
+
+```yaml
+semantic_search:
+  enabled: True
+  model_size: small
+```
+
+Using `large` as the model size setting employs the full Jina model appropriate for high performance systems running a GPU. The `small` size uses a quantized version of the model that uses much less RAM and runs faster on CPU with a very negligible difference in embedding quality. Most users will not need to change this setting from the default of `small`.
 
 ## Usage
 
