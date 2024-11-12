@@ -1,14 +1,10 @@
 import SearchThumbnail from "@/components/card/SearchThumbnail";
 import SearchFilterGroup from "@/components/filter/SearchFilterGroup";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
-import Chip from "@/components/indicators/Chip";
-import SearchDetailDialog from "@/components/overlay/detail/SearchDetailDialog";
+import SearchDetailDialog, {
+  SearchTab,
+} from "@/components/overlay/detail/SearchDetailDialog";
 import { Toaster } from "@/components/ui/sonner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { SearchFilter, SearchResult, SearchSource } from "@/types/search";
@@ -25,6 +21,14 @@ import InputWithTags from "@/components/input/InputWithTags";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { isEqual } from "lodash";
 import { formatDateToLocaleString } from "@/utils/dateUtil";
+import SearchThumbnailFooter from "@/components/card/SearchThumbnailFooter";
+import SearchSettings from "@/components/settings/SearchSettings";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import Chip from "@/components/indicators/Chip";
 import { TooltipPortal } from "@radix-ui/react-tooltip";
 
 type SearchViewProps = {
@@ -33,12 +37,18 @@ type SearchViewProps = {
   searchFilter?: SearchFilter;
   searchResults?: SearchResult[];
   isLoading: boolean;
+  isValidating: boolean;
+  hasMore: boolean;
+  columns: number;
+  defaultView?: string;
   setSearch: (search: string) => void;
   setSimilaritySearch: (search: SearchResult) => void;
   setSearchFilter: (filter: SearchFilter) => void;
   onUpdateFilter: (filter: SearchFilter) => void;
   loadMore: () => void;
-  hasMore: boolean;
+  refresh: () => void;
+  setColumns: (columns: number) => void;
+  setDefaultView: (name: string) => void;
 };
 export default function SearchView({
   search,
@@ -46,16 +56,39 @@ export default function SearchView({
   searchFilter,
   searchResults,
   isLoading,
+  isValidating,
+  hasMore,
+  columns,
+  defaultView = "summary",
   setSearch,
   setSimilaritySearch,
   setSearchFilter,
   onUpdateFilter,
   loadMore,
-  hasMore,
+  refresh,
+  setColumns,
+  setDefaultView,
 }: SearchViewProps) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const { data: config } = useSWR<FrigateConfig>("config", {
     revalidateOnFocus: false,
   });
+
+  // grid
+
+  const gridClassName = cn(
+    "grid w-full gap-2 px-1 gap-2 lg:gap-4 md:mx-2",
+    isMobileOnly && "grid-cols-2",
+    {
+      "sm:grid-cols-2": columns <= 2,
+      "sm:grid-cols-3": columns === 3,
+      "sm:grid-cols-4": columns === 4,
+      "sm:grid-cols-5": columns === 5,
+      "sm:grid-cols-6": columns === 6,
+      "sm:grid-cols-7": columns === 7,
+      "sm:grid-cols-8": columns === 8,
+    },
+  );
 
   // suggestions values
 
@@ -122,8 +155,14 @@ export default function SearchView({
           : ["12:00AM-11:59PM"],
       before: [formatDateToLocaleString()],
       after: [formatDateToLocaleString(-5)],
+      min_score: ["50"],
+      max_score: ["100"],
+      has_clip: ["yes", "no"],
+      has_snapshot: ["yes", "no"],
+      ...(config?.plus?.enabled &&
+        searchFilter?.has_snapshot && { is_submitted: ["yes", "no"] }),
     }),
-    [config, allLabels, allZones, allSubLabels],
+    [config, allLabels, allZones, allSubLabels, searchFilter],
   );
 
   // remove duplicate event ids
@@ -138,16 +177,40 @@ export default function SearchView({
   // detail
 
   const [searchDetail, setSearchDetail] = useState<SearchResult>();
+  const [page, setPage] = useState<SearchTab>("details");
 
   // search interaction
 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  const onSelectSearch = useCallback((item: SearchResult, index: number) => {
-    setSearchDetail(item);
-    setSelectedIndex(index);
-  }, []);
+  const onSelectSearch = useCallback(
+    (item: SearchResult, index: number, page: SearchTab = "details") => {
+      setPage(page);
+      setSearchDetail(item);
+      setSelectedIndex(index);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [searchTerm, searchFilter]);
+
+  // confidence score
+
+  const zScoreToConfidence = (score: number) => {
+    // Normalizing is not needed for similarity searches
+    // Sigmoid function for normalized: 1 / (1 + e^x)
+    // Cosine for similarity
+    if (searchFilter) {
+      const notNormalized = searchFilter?.search_type?.includes("similarity");
+
+      const confidence = notNormalized ? 1 - score : 1 / (1 + Math.exp(score));
+
+      return Math.round(confidence * 100);
+    }
+  };
 
   // update search detail when results change
 
@@ -163,25 +226,6 @@ export default function SearchView({
       }
     }
   }, [searchResults, searchDetail]);
-
-  // confidence score - probably needs tweaking
-
-  const zScoreToConfidence = (score: number, source: string) => {
-    let midpoint, scale;
-
-    if (source === "thumbnail") {
-      midpoint = 2;
-      scale = 0.5;
-    } else {
-      midpoint = 0.5;
-      scale = 1.5;
-    }
-
-    // Sigmoid function: 1 / (1 + e^x)
-    const confidence = 1 / (1 + Math.exp((score - midpoint) * scale));
-
-    return Math.round(confidence * 100);
-  };
 
   const hasExistingSearch = useMemo(
     () => searchResults != undefined || searchFilter != undefined,
@@ -217,13 +261,25 @@ export default function SearchView({
             return newIndex;
           });
           break;
+        case "PageDown":
+          contentRef.current?.scrollBy({
+            top: contentRef.current.clientHeight / 2,
+            behavior: "smooth",
+          });
+          break;
+        case "PageUp":
+          contentRef.current?.scrollBy({
+            top: -contentRef.current.clientHeight / 2,
+            behavior: "smooth",
+          });
+          break;
       }
     },
     [uniqueResults, inputFocused],
   );
 
   useKeyboardListener(
-    ["ArrowLeft", "ArrowRight"],
+    ["ArrowLeft", "ArrowRight", "PageDown", "PageUp"],
     onKeyboardShortcut,
     !inputFocused,
   );
@@ -279,7 +335,9 @@ export default function SearchView({
       <Toaster closeButton={true} />
       <SearchDetailDialog
         search={searchDetail}
+        page={page}
         setSearch={setSearchDetail}
+        setSearchPage={setPage}
         setSimilarity={
           searchDetail && (() => setSimilaritySearch(searchDetail))
         }
@@ -310,11 +368,19 @@ export default function SearchView({
 
         {hasExistingSearch && (
           <ScrollArea className="w-full whitespace-nowrap lg:ml-[35%]">
-            <div className="flex flex-row">
+            <div className="flex flex-row gap-2">
               <SearchFilterGroup
                 className={cn(
                   "w-full justify-between md:justify-start lg:justify-end",
                 )}
+                filter={searchFilter}
+                onUpdateFilter={onUpdateFilter}
+              />
+              <SearchSettings
+                columns={columns}
+                setColumns={setColumns}
+                defaultView={defaultView}
+                setDefaultView={setDefaultView}
                 filter={searchFilter}
                 onUpdateFilter={onUpdateFilter}
               />
@@ -324,7 +390,10 @@ export default function SearchView({
         )}
       </div>
 
-      <div className="no-scrollbar flex flex-1 flex-wrap content-start gap-2 overflow-y-auto">
+      <div
+        ref={contentRef}
+        className="no-scrollbar flex flex-1 flex-wrap content-start gap-2 overflow-y-auto"
+      >
         {uniqueResults?.length == 0 && !isLoading && (
           <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
             <LuSearchX className="size-16" />
@@ -332,15 +401,15 @@ export default function SearchView({
           </div>
         )}
 
-        {uniqueResults?.length == 0 &&
-          isLoading &&
-          (searchTerm ||
+        {((isLoading && uniqueResults?.length == 0) || // show on initial load
+          (isValidating && !isLoading)) && // or revalidation
+          (searchTerm || // or change of filter/search term
             (searchFilter && Object.keys(searchFilter).length !== 0)) && (
-            <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
+            <ActivityIndicator className="absolute left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-background/80 p-3 dark:bg-background/50" />
           )}
 
         {uniqueResults && (
-          <div className="grid w-full gap-2 px-1 sm:grid-cols-2 md:mx-2 md:grid-cols-4 md:gap-4 3xl:grid-cols-6">
+          <div className={gridClassName}>
             {uniqueResults &&
               uniqueResults.map((value, index) => {
                 const selected = selectedIndex === index;
@@ -350,19 +419,19 @@ export default function SearchView({
                     key={value.id}
                     ref={(item) => (itemRefs.current[index] = item)}
                     data-start={value.start_time}
-                    className="review-item relative rounded-lg"
+                    className="review-item relative flex flex-col rounded-lg"
                   >
                     <div
                       className={cn(
-                        "aspect-square size-full overflow-hidden rounded-lg",
+                        "aspect-square w-full overflow-hidden rounded-t-lg border",
                       )}
                     >
                       <SearchThumbnail
                         searchResult={value}
-                        findSimilar={() => setSimilaritySearch(value)}
                         onClick={() => onSelectSearch(value, index)}
                       />
-                      {searchTerm && (
+                      {(searchTerm ||
+                        searchFilter?.search_type?.includes("similarity")) && (
                         <div className={cn("absolute right-2 top-2 z-40")}>
                           <Tooltip>
                             <TooltipTrigger>
@@ -370,25 +439,16 @@ export default function SearchView({
                                 className={`flex select-none items-center justify-between space-x-1 bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500 text-xs capitalize text-white`}
                               >
                                 {value.search_source == "thumbnail" ? (
-                                  <LuImage className="mr-1 size-3" />
+                                  <LuImage className="size-3" />
                                 ) : (
-                                  <LuText className="mr-1 size-3" />
+                                  <LuText className="size-3" />
                                 )}
-                                {zScoreToConfidence(
-                                  value.search_distance,
-                                  value.search_source,
-                                )}
-                                %
                               </Chip>
                             </TooltipTrigger>
                             <TooltipPortal>
                               <TooltipContent>
                                 Matched {value.search_source} at{" "}
-                                {zScoreToConfidence(
-                                  value.search_distance,
-                                  value.search_source,
-                                )}
-                                %
+                                {zScoreToConfidence(value.search_distance)}%
                               </TooltipContent>
                             </TooltipPortal>
                           </Tooltip>
@@ -398,6 +458,21 @@ export default function SearchView({
                     <div
                       className={`review-item-ring pointer-events-none absolute inset-0 z-10 size-full rounded-lg outline outline-[3px] -outline-offset-[2.8px] ${selected ? `shadow-selected outline-selected` : "outline-transparent duration-500"}`}
                     />
+                    <div className="flex w-full grow items-center justify-between rounded-b-lg border border-t-0 bg-card p-3 text-card-foreground">
+                      <SearchThumbnailFooter
+                        searchResult={value}
+                        columns={columns}
+                        findSimilar={() => {
+                          if (config?.semantic_search.enabled) {
+                            setSimilaritySearch(value);
+                          }
+                        }}
+                        refreshResults={refresh}
+                        showObjectLifecycle={() =>
+                          onSelectSearch(value, index, "object lifecycle")
+                        }
+                      />
+                    </div>
                   </div>
                 );
               })}
@@ -414,11 +489,14 @@ export default function SearchView({
       </div>
       {searchFilter &&
         Object.keys(searchFilter).length === 0 &&
-        !searchTerm && (
+        !searchTerm &&
+        defaultView == "summary" && (
           <div className="scrollbar-container flex size-full flex-col overflow-y-auto">
             <ExploreView
               searchDetail={searchDetail}
               setSearchDetail={setSearchDetail}
+              setSimilaritySearch={setSimilaritySearch}
+              onSelectSearch={onSelectSearch}
             />
           </div>
         )}

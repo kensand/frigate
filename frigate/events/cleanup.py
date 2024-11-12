@@ -10,7 +10,7 @@ from pathlib import Path
 
 from frigate.config import FrigateConfig
 from frigate.const import CLIPS_DIR
-from frigate.embeddings.embeddings import Embeddings
+from frigate.db.sqlitevecq import SqliteVecQueueDatabase
 from frigate.models import Event, Timeline
 
 logger = logging.getLogger(__name__)
@@ -21,18 +21,20 @@ class EventCleanupType(str, Enum):
     snapshots = "snapshots"
 
 
+CHUNK_SIZE = 50
+
+
 class EventCleanup(threading.Thread):
-    def __init__(self, config: FrigateConfig, stop_event: MpEvent):
-        threading.Thread.__init__(self)
-        self.name = "event_cleanup"
+    def __init__(
+        self, config: FrigateConfig, stop_event: MpEvent, db: SqliteVecQueueDatabase
+    ):
+        super().__init__(name="event_cleanup")
         self.config = config
         self.stop_event = stop_event
+        self.db = db
         self.camera_keys = list(self.config.cameras.keys())
         self.removed_camera_labels: list[str] = None
         self.camera_labels: dict[str, dict[str, any]] = {}
-
-        if self.config.semantic_search.enabled:
-            self.embeddings = Embeddings()
 
     def get_removed_camera_labels(self) -> list[Event]:
         """Get a list of distinct labels for removed cameras."""
@@ -108,6 +110,7 @@ class EventCleanup(threading.Thread):
                 .namedtuples()
                 .iterator()
             )
+            logger.debug(f"{len(expired_events)} events can be expired")
             # delete the media from disk
             for expired in expired_events:
                 media_name = f"{expired.camera}-{expired.id}"
@@ -126,13 +129,34 @@ class EventCleanup(threading.Thread):
                     logger.warning(f"Unable to delete event images: {e}")
 
             # update the clips attribute for the db entry
-            update_query = Event.update(update_params).where(
+            query = Event.select(Event.id).where(
                 Event.camera.not_in(self.camera_keys),
                 Event.start_time < expire_after,
                 Event.label == event.label,
                 Event.retain_indefinitely == False,
             )
-            update_query.execute()
+
+            events_to_update = []
+
+            for batch in query.iterator():
+                events_to_update.extend([event.id for event in batch])
+                if len(events_to_update) >= CHUNK_SIZE:
+                    logger.debug(
+                        f"Updating {update_params} for {len(events_to_update)} events"
+                    )
+                    Event.update(update_params).where(
+                        Event.id << events_to_update
+                    ).execute()
+                    events_to_update = []
+
+            # Update any remaining events
+            if events_to_update:
+                logger.debug(
+                    f"Updating clips/snapshots attribute for {len(events_to_update)} events"
+                )
+                Event.update(update_params).where(
+                    Event.id << events_to_update
+                ).execute()
 
         events_to_update = []
 
@@ -197,7 +221,11 @@ class EventCleanup(threading.Thread):
                             logger.warning(f"Unable to delete event images: {e}")
 
         # update the clips attribute for the db entry
-        Event.update(update_params).where(Event.id << events_to_update).execute()
+        for i in range(0, len(events_to_update), CHUNK_SIZE):
+            batch = events_to_update[i : i + CHUNK_SIZE]
+            logger.debug(f"Updating {update_params} for {len(batch)} events")
+            Event.update(update_params).where(Event.id << batch).execute()
+
         return events_to_update
 
     def run(self) -> None:
@@ -223,22 +251,16 @@ class EventCleanup(threading.Thread):
                 .iterator()
             )
             events_to_delete = [e.id for e in events]
+            logger.debug(f"Found {len(events_to_delete)} events that can be expired")
             if len(events_to_delete) > 0:
-                chunk_size = 50
-                for i in range(0, len(events_to_delete), chunk_size):
-                    chunk = events_to_delete[i : i + chunk_size]
+                for i in range(0, len(events_to_delete), CHUNK_SIZE):
+                    chunk = events_to_delete[i : i + CHUNK_SIZE]
+                    logger.debug(f"Deleting {len(chunk)} events from the database")
                     Event.delete().where(Event.id << chunk).execute()
 
                     if self.config.semantic_search.enabled:
-                        for collection in [
-                            self.embeddings.thumbnail,
-                            self.embeddings.description,
-                        ]:
-                            existing_ids = collection.get(ids=chunk, include=[])["ids"]
-                            if existing_ids:
-                                collection.delete(ids=existing_ids)
-                                logger.debug(
-                                    f"Deleted {len(existing_ids)} embeddings from {collection.__class__.__name__}"
-                                )
+                        self.db.delete_embeddings_description(event_ids=chunk)
+                        self.db.delete_embeddings_thumbnail(event_ids=chunk)
+                        logger.debug(f"Deleted {len(events_to_delete)} embeddings")
 
         logger.info("Exiting event cleanup...")

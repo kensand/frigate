@@ -3,7 +3,7 @@ import { isDesktop, isMobile } from "react-device-detect";
 import useSWR from "swr";
 import { MdHome } from "react-icons/md";
 import { usePersistedOverlayState } from "@/hooks/use-overlay-state";
-import { Button } from "../ui/button";
+import { Button, buttonVariants } from "../ui/button";
 import { useCallback, useMemo, useState } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { LuPencil, LuPlus } from "react-icons/lu";
@@ -141,6 +141,7 @@ export function CameraGroupSelector({ className }: CameraGroupSelectorProps) {
                     ? "bg-blue-900 bg-opacity-60 text-selected focus:bg-blue-900 focus:bg-opacity-60"
                     : "bg-secondary text-secondary-foreground focus:bg-secondary focus:text-secondary-foreground"
                 }
+                aria-label="All Cameras"
                 size="xs"
                 onClick={() => (group ? setGroup("default", true) : null)}
                 onMouseEnter={() => (isDesktop ? showTooltip("default") : null)}
@@ -165,6 +166,7 @@ export function CameraGroupSelector({ className }: CameraGroupSelectorProps) {
                         ? "bg-blue-900 bg-opacity-60 text-selected focus:bg-blue-900 focus:bg-opacity-60"
                         : "bg-secondary text-secondary-foreground"
                     }
+                    aria-label="Camera Group"
                     size="xs"
                     onClick={() => setGroup(name, group != "default")}
                     onMouseEnter={() => (isDesktop ? showTooltip(name) : null)}
@@ -191,6 +193,7 @@ export function CameraGroupSelector({ className }: CameraGroupSelectorProps) {
 
           <Button
             className="bg-secondary text-muted-foreground"
+            aria-label="Add camera group"
             size="xs"
             onClick={() => setAddGroup(true)}
           >
@@ -355,6 +358,7 @@ function NewGroupDialog({
                         "size-6 rounded-md bg-secondary-foreground p-1 text-background",
                       isMobile && "text-secondary-foreground",
                     )}
+                    aria-label="Add camera group"
                     onClick={() => {
                       setEditState("add");
                     }}
@@ -518,7 +522,10 @@ export function CameraGroupRow({
             </AlertDialogDescription>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={onDeleteGroup}>
+              <AlertDialogAction
+                className={buttonVariants({ variant: "destructive" })}
+                onClick={onDeleteGroup}
+              >
                 Delete
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -533,10 +540,16 @@ export function CameraGroupRow({
               </DropdownMenuTrigger>
               <DropdownMenuPortal>
                 <DropdownMenuContent>
-                  <DropdownMenuItem onClick={onEditGroup}>
+                  <DropdownMenuItem
+                    aria-label="Edit group"
+                    onClick={onEditGroup}
+                  >
                     Edit
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setDeleteDialogOpen(true)}>
+                  <DropdownMenuItem
+                    aria-label="Delete group"
+                    onClick={() => setDeleteDialogOpen(true)}
+                  >
                     Delete
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -643,6 +656,11 @@ export function CameraGroupEdit({
 
       setIsLoading(true);
 
+      let renamingQuery = "";
+      if (editingGroup && editingGroup[0] !== values.name) {
+        renamingQuery = `camera_groups.${editingGroup[0]}&`;
+      }
+
       const order =
         editingGroup === undefined
           ? currentGroups.length + 1
@@ -655,9 +673,12 @@ export function CameraGroupEdit({
         .join("");
 
       axios
-        .put(`config/set?${orderQuery}&${iconQuery}${cameraQueries}`, {
-          requires_restart: 0,
-        })
+        .put(
+          `config/set?${renamingQuery}${orderQuery}&${iconQuery}${cameraQueries}`,
+          {
+            requires_restart: 0,
+          },
+        )
         .then((res) => {
           if (res.status === 200) {
             toast.success(`Camera group (${values.name}) has been saved.`, {
@@ -712,7 +733,6 @@ export function CameraGroupEdit({
                 <Input
                   className="text-md w-full border border-input bg-background p-2 hover:bg-accent hover:text-accent-foreground dark:[color-scheme:dark]"
                   placeholder="Enter a name..."
-                  disabled={editingGroup !== undefined}
                   {...field}
                 />
               </FormControl>
@@ -783,13 +803,19 @@ export function CameraGroupEdit({
         <Separator className="my-2 flex bg-secondary" />
 
         <div className="flex flex-row gap-2 py-5 md:pb-0">
-          <Button type="button" className="flex flex-1" onClick={onCancel}>
+          <Button
+            type="button"
+            className="flex flex-1"
+            aria-label="Cancel"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
           <Button
             variant="select"
             disabled={isLoading}
             className="flex flex-1"
+            aria-label="Save"
             type="submit"
           >
             {isLoading ? (

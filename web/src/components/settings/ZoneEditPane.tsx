@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ATTRIBUTE_LABELS, FrigateConfig } from "@/types/frigateConfig";
+import { FrigateConfig } from "@/types/frigateConfig";
 import useSWR from "swr";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -28,6 +28,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { flattenPoints, interpolatePoints } from "@/utils/canvasUtil";
 import ActivityIndicator from "../indicators/activity-indicator";
+import { getAttributeLabels } from "@/utils/iconUtil";
 
 type ZoneEditPaneProps = {
   polygons?: Polygon[];
@@ -465,13 +466,18 @@ export default function ZoneEditPane({
             )}
           />
           <div className="flex flex-row gap-2 pt-5">
-            <Button className="flex flex-1" onClick={onCancel}>
+            <Button
+              className="flex flex-1"
+              aria-label="Cancel"
+              onClick={onCancel}
+            >
               Cancel
             </Button>
             <Button
               variant="select"
               disabled={isLoading}
               className="flex flex-1"
+              aria-label="Save"
               type="submit"
             >
               {isLoading ? (
@@ -505,6 +511,14 @@ export function ZoneObjectSelector({
 }: ZoneObjectSelectorProps) {
   const { data: config } = useSWR<FrigateConfig>("config");
 
+  const attributeLabels = useMemo(() => {
+    if (!config) {
+      return [];
+    }
+
+    return getAttributeLabels(config);
+  }, [config]);
+
   const cameraConfig = useMemo(() => {
     if (config && camera) {
       return config.cameras[camera];
@@ -519,7 +533,7 @@ export function ZoneObjectSelector({
     const labels = new Set<string>();
 
     cameraConfig.objects.track.forEach((label) => {
-      if (!ATTRIBUTE_LABELS.includes(label)) {
+      if (!attributeLabels.includes(label)) {
         labels.add(label);
       }
     });
@@ -527,7 +541,7 @@ export function ZoneObjectSelector({
     if (zoneName) {
       if (cameraConfig.zones[zoneName]) {
         cameraConfig.zones[zoneName].objects.forEach((label) => {
-          if (!ATTRIBUTE_LABELS.includes(label)) {
+          if (!attributeLabels.includes(label)) {
             labels.add(label);
           }
         });
@@ -535,7 +549,7 @@ export function ZoneObjectSelector({
     }
 
     return [...labels].sort() || [];
-  }, [config, cameraConfig, zoneName]);
+  }, [config, cameraConfig, attributeLabels, zoneName]);
 
   const [currentLabels, setCurrentLabels] = useState<string[] | undefined>(
     selectedLabels,

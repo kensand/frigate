@@ -17,7 +17,21 @@ PLUS_API_HOST = "https://api.frigate.video"
 
 DEFAULT_ATTRIBUTE_LABEL_MAP = {
     "person": ["amazon", "face"],
-    "car": ["amazon", "fedex", "license_plate", "ups"],
+    "car": [
+        "amazon",
+        "an_post",
+        "dhl",
+        "dpd",
+        "fedex",
+        "gls",
+        "license_plate",
+        "nzpost",
+        "postnl",
+        "postnord",
+        "purolator",
+        "ups",
+        "usps",
+    ],
 }
 LABEL_CONSOLIDATION_MAP = {
     "car": 0.8,
@@ -84,6 +98,8 @@ UPSERT_REVIEW_SEGMENT = "upsert_review_segment"
 CLEAR_ONGOING_REVIEW_SEGMENTS = "clear_ongoing_review_segments"
 UPDATE_CAMERA_ACTIVITY = "update_camera_activity"
 UPDATE_EVENT_DESCRIPTION = "update_event_description"
+UPDATE_MODEL_STATE = "update_model_state"
+UPDATE_EMBEDDINGS_REINDEX_PROGRESS = "handle_embeddings_reindex_progress"
 
 # Stats Values
 

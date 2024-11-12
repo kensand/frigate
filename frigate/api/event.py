@@ -1,8 +1,6 @@
 """Event apis."""
 
-import base64
 import datetime
-import io
 import logging
 import os
 from functools import reduce
@@ -10,12 +8,10 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import cv2
-import numpy as np
 from fastapi import APIRouter, Request
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse
 from peewee import JOIN, DoesNotExist, fn, operator
-from PIL import Image
 from playhouse.shortcuts import model_to_dict
 
 from frigate.api.defs.events_body import (
@@ -31,12 +27,14 @@ from frigate.api.defs.events_query_parameters import (
     EventsSearchQueryParams,
     EventsSummaryQueryParams,
 )
+from frigate.api.defs.regenerate_query_parameters import (
+    RegenerateQueryParameters,
+)
 from frigate.api.defs.tags import Tags
 from frigate.const import (
     CLIPS_DIR,
 )
 from frigate.embeddings import EmbeddingsContext
-from frigate.embeddings.embeddings import get_metadata
 from frigate.models import Event, ReviewSegment, Timeline
 from frigate.object_processing import TrackedObject
 from frigate.util.builtin import get_tz_modifiers
@@ -90,6 +88,7 @@ def events(params: EventsQueryParams = Depends()):
     is_submitted = params.is_submitted
     min_length = params.min_length
     max_length = params.max_length
+    event_id = params.event_id
 
     sort = params.sort
 
@@ -232,6 +231,9 @@ def events(params: EventsQueryParams = Depends()):
         elif is_submitted > 0:
             clauses.append((Event.plus_id != ""))
 
+    if event_id is not None:
+        clauses.append((Event.id == event_id))
+
     if len(clauses) == 0:
         clauses.append((True))
 
@@ -261,66 +263,61 @@ def events(params: EventsQueryParams = Depends()):
 
 @router.get("/events/explore")
 def events_explore(limit: int = 10):
-    subquery = Event.select(
-        Event.id,
-        Event.camera,
-        Event.label,
-        Event.zones,
-        Event.start_time,
-        Event.end_time,
-        Event.has_clip,
-        Event.has_snapshot,
-        Event.plus_id,
-        Event.retain_indefinitely,
-        Event.sub_label,
-        Event.top_score,
-        Event.false_positive,
-        Event.box,
-        Event.data,
-        fn.rank()
-        .over(partition_by=[Event.label], order_by=[Event.start_time.desc()])
-        .alias("rank"),
-        fn.COUNT(Event.id).over(partition_by=[Event.label]).alias("event_count"),
-    ).alias("subquery")
+    # get distinct labels for all events
+    distinct_labels = Event.select(Event.label).distinct().order_by(Event.label)
 
-    query = (
-        Event.select(
-            subquery.c.id,
-            subquery.c.camera,
-            subquery.c.label,
-            subquery.c.zones,
-            subquery.c.start_time,
-            subquery.c.end_time,
-            subquery.c.has_clip,
-            subquery.c.has_snapshot,
-            subquery.c.plus_id,
-            subquery.c.retain_indefinitely,
-            subquery.c.sub_label,
-            subquery.c.top_score,
-            subquery.c.false_positive,
-            subquery.c.box,
-            subquery.c.data,
-            subquery.c.event_count,
-        )
-        .from_(subquery)
-        .where(subquery.c.rank <= limit)
-        .order_by(subquery.c.event_count.desc(), subquery.c.start_time.desc())
-        .dicts()
-    )
+    label_counts = {}
 
-    events = list(query.iterator())
+    def event_generator():
+        for label_obj in distinct_labels.iterator():
+            label = label_obj.label
 
-    processed_events = [
-        {k: v for k, v in event.items() if k != "data"}
-        | {
-            "data": {
-                k: v
-                for k, v in event["data"].items()
-                if k in ["type", "score", "top_score", "description"]
+            # get most recent events for this label
+            label_events = (
+                Event.select()
+                .where(Event.label == label)
+                .order_by(Event.start_time.desc())
+                .limit(limit)
+                .iterator()
+            )
+
+            # count total events for this label
+            label_counts[label] = Event.select().where(Event.label == label).count()
+
+            yield from label_events
+
+    def process_events():
+        for event in event_generator():
+            processed_event = {
+                "id": event.id,
+                "camera": event.camera,
+                "label": event.label,
+                "zones": event.zones,
+                "start_time": event.start_time,
+                "end_time": event.end_time,
+                "has_clip": event.has_clip,
+                "has_snapshot": event.has_snapshot,
+                "plus_id": event.plus_id,
+                "retain_indefinitely": event.retain_indefinitely,
+                "sub_label": event.sub_label,
+                "top_score": event.top_score,
+                "false_positive": event.false_positive,
+                "box": event.box,
+                "data": {
+                    k: v
+                    for k, v in event.data.items()
+                    if k in ["type", "score", "top_score", "description"]
+                },
+                "event_count": label_counts[event.label],
             }
-        }
-        for event in events
-    ]
+            yield processed_event
+
+    # convert iterator to list and sort
+    processed_events = sorted(
+        process_events(),
+        key=lambda x: (x["event_count"], x["start_time"]),
+        reverse=True,
+    )
 
     return JSONResponse(content=processed_events)
 
@@ -350,6 +347,7 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
     search_type = params.search_type
     include_thumbnails = params.include_thumbnails
     limit = params.limit
+    sort = params.sort
 
     # Filters
     cameras = params.cameras
@@ -357,7 +355,12 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
     zones = params.zones
     after = params.after
     before = params.before
+    min_score = params.min_score
+    max_score = params.max_score
     time_range = params.time_range
+    has_clip = params.has_clip
+    has_snapshot = params.has_snapshot
+    is_submitted = params.is_submitted
 
     # for similarity search
     event_id = params.event_id
@@ -396,6 +399,7 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
         Event.end_time,
         Event.has_clip,
         Event.has_snapshot,
+        Event.top_score,
         Event.data,
         Event.plus_id,
         ReviewSegment.thumb_path,
@@ -408,16 +412,12 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
     event_filters = []
 
     if cameras != "all":
-        camera_list = cameras.split(",")
-        event_filters.append((Event.camera << camera_list))
+        event_filters.append((Event.camera << cameras.split(",")))
 
     if labels != "all":
-        label_list = labels.split(",")
-        event_filters.append((Event.label << label_list))
+        event_filters.append((Event.label << labels.split(",")))
 
     if zones != "all":
-        # use matching so events with multiple zones
-        # still match on a search where any zone matches
         zone_clauses = []
         filtered_zones = zones.split(",")
 
@@ -428,8 +428,7 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
         for zone in filtered_zones:
             zone_clauses.append((Event.zones.cast("text") % f'*"{zone}"*'))
 
-        zone_clause = reduce(operator.or_, zone_clauses)
-        event_filters.append((zone_clause))
+        event_filters.append((reduce(operator.or_, zone_clauses)))
 
     if after:
         event_filters.append((Event.start_time > after))
@@ -437,14 +436,32 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
     if before:
         event_filters.append((Event.start_time < before))
 
+    if has_clip is not None:
+        event_filters.append((Event.has_clip == has_clip))
+
+    if has_snapshot is not None:
+        event_filters.append((Event.has_snapshot == has_snapshot))
+
+    if is_submitted is not None:
+        if is_submitted == 0:
+            event_filters.append((Event.plus_id.is_null()))
+        elif is_submitted > 0:
+            event_filters.append((Event.plus_id != ""))
+
+    if min_score is not None and max_score is not None:
+        event_filters.append((Event.data["score"].between(min_score, max_score)))
+    else:
+        if min_score is not None:
+            event_filters.append((Event.data["score"] >= min_score))
+        if max_score is not None:
+            event_filters.append((Event.data["score"] <= max_score))
+
     if time_range != DEFAULT_TIME_RANGE:
-        # get timezone arg to ensure browser times are used
         tz_name = params.timezone
         hour_modifier, minute_modifier, _ = get_tz_modifiers(tz_name)
 
         times = time_range.split(",")
-        time_after = times[0]
-        time_before = times[1]
+        time_after, time_before = times
 
         start_hour_fun = fn.strftime(
             "%H:%M",
@@ -467,132 +484,120 @@ def events_search(request: Request, params: EventsSearchQueryParams = Depends())
             event_filters.append((start_hour_fun > time_after))
             event_filters.append((start_hour_fun < time_before))
 
-    if event_filters:
-        filtered_event_ids = (
-            Event.select(Event.id)
-            .where(reduce(operator.and_, event_filters))
-            .tuples()
-            .iterator()
-        )
-        event_ids = [event_id[0] for event_id in filtered_event_ids]
-
-        if not event_ids:
-            return JSONResponse(content=[])  # No events to search on
-    else:
-        event_ids = []
-
-    # Build the Chroma where clause based on the event IDs
-    where = {"id": {"$in": event_ids}} if event_ids else {}
-
-    thumb_ids = {}
-    desc_ids = {}
-
+    # Perform semantic search
+    search_results = {}
     if search_type == "similarity":
-        # Grab the ids of events that match the thumbnail image embeddings
         try:
             search_event: Event = Event.get(Event.id == event_id)
         except DoesNotExist:
             return JSONResponse(
-                content=(
-                    {
-                        "success": False,
-                        "message": "Event not found",
-                    }
-                ),
+                content={
+                    "success": False,
+                    "message": "Event not found",
+                },
                 status_code=404,
             )
-        thumbnail = base64.b64decode(search_event.thumbnail)
-        img = np.array(Image.open(io.BytesIO(thumbnail)).convert("RGB"))
-        thumb_result = context.embeddings.thumbnail.query(
-            query_images=[img],
-            n_results=limit,
-            where=where,
-        )
-        thumb_ids = dict(
-            zip(
-                thumb_result["ids"][0],
-                context.thumb_stats.normalize(thumb_result["distances"][0]),
-            )
-        )
+
+        thumb_result = context.search_thumbnail(search_event)
+        thumb_ids = {result[0]: result[1] for result in thumb_result}
+        search_results = {
+            event_id: {"distance": distance, "source": "thumbnail"}
+            for event_id, distance in thumb_ids.items()
+        }
     else:
         search_types = search_type.split(",")
 
+        # only save stats for multi-modal searches
+        save_stats = "thumbnail" in search_types and "description" in search_types
+
         if "thumbnail" in search_types:
-            thumb_result = context.embeddings.thumbnail.query(
-                query_texts=[query],
-                n_results=limit,
-                where=where,
+            thumb_result = context.search_thumbnail(query)
+
+            thumb_distances = context.thumb_stats.normalize(
+                [result[1] for result in thumb_result], save_stats
             )
-            # Do a rudimentary normalization of the difference in distances returned by CLIP and MiniLM.
+
             thumb_ids = dict(
-                zip(
-                    thumb_result["ids"][0],
-                    context.thumb_stats.normalize(thumb_result["distances"][0]),
-                )
+                zip([result[0] for result in thumb_result], thumb_distances)
+            )
+            search_results.update(
+                {
+                    event_id: {"distance": distance, "source": "thumbnail"}
+                    for event_id, distance in thumb_ids.items()
+                }
             )
 
         if "description" in search_types:
-            desc_result = context.embeddings.description.query(
-                query_texts=[query],
-                n_results=limit,
-                where=where,
-            )
-            desc_ids = dict(
-                zip(
-                    desc_result["ids"][0],
-                    context.desc_stats.normalize(desc_result["distances"][0]),
-                )
+            desc_result = context.search_description(query)
+
+            desc_distances = context.desc_stats.normalize(
+                [result[1] for result in desc_result], save_stats
             )
 
-    results = {}
-    for event_id in thumb_ids.keys() | desc_ids:
-        min_distance = min(
-            i
-            for i in (thumb_ids.get(event_id), desc_ids.get(event_id))
-            if i is not None
-        )
-        results[event_id] = {
-            "distance": min_distance,
-            "source": "thumbnail"
-            if min_distance == thumb_ids.get(event_id)
-            else "description",
-        }
+            desc_ids = dict(zip([result[0] for result in desc_result], desc_distances))
 
-    if not results:
+            for event_id, distance in desc_ids.items():
+                if (
+                    event_id not in search_results
+                    or distance < search_results[event_id]["distance"]
+                ):
+                    search_results[event_id] = {
+                        "distance": distance,
+                        "source": "description",
+                    }
+
+    if not search_results:
         return JSONResponse(content=[])
 
-    # Get the event data
-    events = (
-        Event.select(*selected_columns)
-        .join(
-            ReviewSegment,
-            JOIN.LEFT_OUTER,
-            on=(fn.json_extract(ReviewSegment.data, "$.detections").contains(Event.id)),
-        )
-        .where(Event.id << list(results.keys()))
-        .dicts()
-        .iterator()
+    # Fetch events in a single query
+    events_query = Event.select(*selected_columns).join(
+        ReviewSegment,
+        JOIN.LEFT_OUTER,
+        on=(fn.json_extract(ReviewSegment.data, "$.detections").contains(Event.id)),
     )
-    events = list(events)
 
-    events = [
-        {k: v for k, v in event.items() if k != "data"}
-        | {
-            "data": {
-                k: v
-                for k, v in event["data"].items()
-                if k in ["type", "score", "top_score", "description"]
-            }
-        }
-        | {
-            "search_distance": results[event["id"]]["distance"],
-            "search_source": results[event["id"]]["source"],
-        }
-        for event in events
-    ]
-    events = sorted(events, key=lambda x: x["search_distance"])[:limit]
+    # Apply filters, if any
+    if event_filters:
+        events_query = events_query.where(reduce(operator.and_, event_filters))
 
-    return JSONResponse(content=events)
+    # If we did a similarity search, limit events to those in search_results
+    if search_results:
+        events_query = events_query.where(Event.id << list(search_results.keys()))
+
+    # Fetch events and process them in a single pass
+    processed_events = []
+    for event in events_query.dicts():
+        processed_event = {k: v for k, v in event.items() if k != "data"}
+        processed_event["data"] = {
+            k: v
+            for k, v in event["data"].items()
+            if k in ["type", "score", "top_score", "description"]
+        }
+
+        if event["id"] in search_results:
+            processed_event["search_distance"] = search_results[event["id"]]["distance"]
+            processed_event["search_source"] = search_results[event["id"]]["source"]
+
+        processed_events.append(processed_event)
+
+    # Sort by search distance if search_results are available, otherwise by start_time as default
+    if search_results:
+        processed_events.sort(key=lambda x: x.get("search_distance", float("inf")))
+    else:
+        if sort == "score_asc":
+            processed_events.sort(key=lambda x: x["score"])
+        elif sort == "score_desc":
+            processed_events.sort(key=lambda x: x["score"], reverse=True)
+        elif sort == "date_asc":
+            processed_events.sort(key=lambda x: x["start_time"])
+        else:
+            # "date_desc" default
+            processed_events.sort(key=lambda x: x["start_time"], reverse=True)
+
+    # Limit the number of events returned
+    processed_events = processed_events[:limit]
+
+    return JSONResponse(content=processed_events)
 
 
 @router.get("/events/summary")
@@ -955,28 +960,19 @@ def set_description(
 
     new_description = body.description
 
-    if new_description is None or len(new_description) == 0:
-        return JSONResponse(
-            content=(
-                {
-                    "success": False,
-                    "message": "description cannot be empty",
-                }
-            ),
-            status_code=400,
-        )
-
     event.data["description"] = new_description
     event.save()
 
     # If semantic search is enabled, update the index
     if request.app.frigate_config.semantic_search.enabled:
         context: EmbeddingsContext = request.app.embeddings
-        context.embeddings.description.upsert(
-            documents=[new_description],
-            metadatas=[get_metadata(event)],
-            ids=[event_id],
-        )
+        if len(new_description) > 0:
+            context.update_description(
+                event_id,
+                new_description,
+            )
+        else:
+            context.db.delete_embeddings_description(event_ids=[event_id])
 
     response_message = (
         f"Event {event_id} description is now blank"
@@ -996,7 +992,9 @@ def set_description(
 
 
 @router.put("/events/{event_id}/description/regenerate")
-def regenerate_description(request: Request, event_id: str):
+def regenerate_description(
+    request: Request, event_id: str, params: RegenerateQueryParameters = Depends()
+):
     try:
         event: Event = Event.get(Event.id == event_id)
     except DoesNotExist:
@@ -1005,11 +1003,13 @@ def regenerate_description(request: Request, event_id: str):
             status_code=404,
         )
 
+    camera_config = request.app.frigate_config.cameras[event.camera]
+
     if (
         request.app.frigate_config.semantic_search.enabled
-        and request.app.frigate_config.genai.enabled
+        and camera_config.genai.enabled
     ):
-        request.app.event_metadata_updater.publish(event.id)
+        request.app.event_metadata_updater.publish((event.id, params.source))
 
         return JSONResponse(
             content=(
@@ -1017,7 +1017,8 @@ def regenerate_description(request: Request, event_id: str):
                     "success": True,
                     "message": "Event "
                     + event_id
-                    + " description regeneration has been requested.",
+                    + " description regeneration has been requested using "
+                    + params.source,
                 }
             ),
             status_code=200,
@@ -1027,7 +1028,7 @@ def regenerate_description(request: Request, event_id: str):
         content=(
             {
                 "success": False,
-                "message": "Semantic search and generative AI are not enabled",
+                "message": "Semantic Search and Generative AI must be enabled to regenerate a description",
             }
         ),
         status_code=400,
@@ -1050,17 +1051,14 @@ def delete_event(request: Request, event_id: str):
         media.unlink(missing_ok=True)
         media = Path(f"{os.path.join(CLIPS_DIR, media_name)}-clean.png")
         media.unlink(missing_ok=True)
-    if event.has_clip:
-        media = Path(f"{os.path.join(CLIPS_DIR, media_name)}.mp4")
-        media.unlink(missing_ok=True)
 
     event.delete_instance()
     Timeline.delete().where(Timeline.source_id == event_id).execute()
     # If semantic search is enabled, update the index
     if request.app.frigate_config.semantic_search.enabled:
         context: EmbeddingsContext = request.app.embeddings
-        context.embeddings.thumbnail.delete(ids=[event_id])
-        context.embeddings.description.delete(ids=[event_id])
+        context.db.delete_embeddings_thumbnail(event_ids=[event_id])
+        context.db.delete_embeddings_description(event_ids=[event_id])
     return JSONResponse(
         content=({"success": True, "message": "Event " + event_id + " deleted"}),
         status_code=200,

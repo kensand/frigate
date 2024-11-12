@@ -77,6 +77,17 @@ export default function ObjectLifecycle({
   const [showControls, setShowControls] = useState(false);
   const [showZones, setShowZones] = useState(true);
 
+  const aspectRatio = useMemo(() => {
+    if (!config) {
+      return 16 / 9;
+    }
+
+    return (
+      config.cameras[event.camera].detect.width /
+      config.cameras[event.camera].detect.height
+    );
+  }, [config, event]);
+
   const getZoneColor = useCallback(
     (zoneName: string) => {
       const zoneColor =
@@ -192,6 +203,20 @@ export default function ObjectLifecycle({
     setCurrent(index);
   };
 
+  const handleThumbnailNavigation = useCallback(
+    (direction: "next" | "previous") => {
+      if (!mainApi || !thumbnailApi || !eventSequence) return;
+      const newIndex =
+        direction === "next"
+          ? Math.min(current + 1, eventSequence.length - 1)
+          : Math.max(current - 1, 0);
+      mainApi.scrollTo(newIndex);
+      thumbnailApi.scrollTo(newIndex);
+      setCurrent(newIndex);
+    },
+    [mainApi, thumbnailApi, current, eventSequence],
+  );
+
   useEffect(() => {
     if (eventSequence && eventSequence.length > 0) {
       setTimeIndex(eventSequence?.[current].timestamp);
@@ -231,6 +256,7 @@ export default function ObjectLifecycle({
         <div className={cn("flex items-center gap-2")}>
           <Button
             className="mb-2 mt-3 flex items-center gap-2.5 rounded-lg md:mt-0"
+            aria-label="Go back"
             size="sm"
             onClick={() => setPane("overview")}
           >
@@ -240,7 +266,15 @@ export default function ObjectLifecycle({
         </div>
       )}
 
-      <div className="relative flex flex-row justify-center">
+      <div
+        className={cn(
+          "relative mx-auto flex max-h-[50dvh] flex-row justify-center",
+          !imgLoaded && aspectRatio < 16 / 9 && "h-full",
+        )}
+        style={{
+          aspectRatio: !imgLoaded ? aspectRatio : undefined,
+        }}
+      >
         <ImageLoadingIndicator
           className="absolute inset-0"
           imgLoaded={imgLoaded}
@@ -263,7 +297,7 @@ export default function ObjectLifecycle({
             key={event.id}
             ref={imgRef}
             className={cn(
-              "max-h-[50dvh] max-w-full select-none rounded-lg object-contain transition-opacity",
+              "max-h-[50dvh] max-w-full select-none rounded-lg object-contain",
             )}
             loading={isSafari ? "eager" : "lazy"}
             style={
@@ -327,6 +361,7 @@ export default function ObjectLifecycle({
               <Button
                 variant={showControls ? "select" : "default"}
                 className="size-7 p-1.5"
+                aria-label="Adjust annotation settings"
               >
                 <LuSettings
                   className="size-5"
@@ -334,7 +369,9 @@ export default function ObjectLifecycle({
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Adjust annotation settings</TooltipContent>
+            <TooltipPortal>
+              <TooltipContent>Adjust annotation settings</TooltipContent>
+            </TooltipPortal>
           </Tooltip>
         </div>
       </div>
@@ -362,7 +399,7 @@ export default function ObjectLifecycle({
             {eventSequence.map((item, index) => (
               <CarouselItem key={index}>
                 <Card className="p-1 text-sm md:p-2" key={index}>
-                  <CardContent className="flex flex-row items-center gap-3 p-1 md:p-6">
+                  <CardContent className="flex flex-row items-center gap-3 p-1 md:p-2">
                     <div className="flex flex-1 flex-row items-center justify-start p-3 pl-1">
                       <div
                         className="rounded-lg p-2"
@@ -390,6 +427,7 @@ export default function ObjectLifecycle({
                         </div>
                         <div className="text-sm text-primary-variant">
                           {formatUnixTimestampToDateTime(item.timestamp, {
+                            timezone: config.ui.timezone,
                             strftime_fmt:
                               config.ui.time_format == "24hour"
                                 ? "%d %b %H:%M:%S"
@@ -472,7 +510,7 @@ export default function ObjectLifecycle({
             containScroll: "keepSnaps",
             dragFree: true,
           }}
-          className="w-full max-w-[72%] md:max-w-[85%]"
+          className="max-w-[72%] md:max-w-[85%]"
           setApi={setThumbnailApi}
         >
           <CarouselContent
@@ -484,10 +522,7 @@ export default function ObjectLifecycle({
             {eventSequence.map((item, index) => (
               <CarouselItem
                 key={index}
-                className={cn(
-                  "basis-1/4 cursor-pointer pl-1 md:basis-[10%]",
-                  fullscreen && "md:basis-16",
-                )}
+                className={cn("basis-auto cursor-pointer pl-1")}
                 onClick={() => handleThumbnailClick(index)}
               >
                 <div className="p-1">
@@ -522,8 +557,14 @@ export default function ObjectLifecycle({
               </CarouselItem>
             ))}
           </CarouselContent>
-          <CarouselPrevious />
-          <CarouselNext />
+          <CarouselPrevious
+            disabled={current === 0}
+            onClick={() => handleThumbnailNavigation("previous")}
+          />
+          <CarouselNext
+            disabled={current === eventSequence.length - 1}
+            onClick={() => handleThumbnailNavigation("next")}
+          />
         </Carousel>
       </div>
     </div>
@@ -598,7 +639,7 @@ function getLifecycleItemDescription(lifecycleItem: ObjectLifecycleSequence) {
         )} detected for ${label}`;
       } else {
         title = `${
-          lifecycleItem.data.sub_label
+          lifecycleItem.data.label
         } recognized as ${lifecycleItem.data.attribute.replaceAll("_", " ")}`;
       }
       return title;

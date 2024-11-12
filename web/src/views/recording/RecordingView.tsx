@@ -140,6 +140,7 @@ export function RecordingView({
 
   const [exportMode, setExportMode] = useState<ExportMode>("none");
   const [exportRange, setExportRange] = useState<TimeRange>();
+  const [showExportPreview, setShowExportPreview] = useState(false);
 
   // move to next clip
 
@@ -379,6 +380,7 @@ export function RecordingView({
         <div className={cn("flex items-center gap-2")}>
           <Button
             className="flex items-center gap-2.5 rounded-lg"
+            aria-label="Go back"
             size="sm"
             onClick={() => navigate(-1)}
           >
@@ -387,6 +389,7 @@ export function RecordingView({
           </Button>
           <Button
             className="flex items-center gap-2.5 rounded-lg"
+            aria-label="Go to the main camera live view"
             size="sm"
             onClick={() => {
               navigate(`/#${mainCamera}`);
@@ -412,6 +415,7 @@ export function RecordingView({
               latestTime={timeRange.before}
               mode={exportMode}
               range={exportRange}
+              showPreview={showExportPreview}
               setRange={(range) => {
                 setExportRange(range);
 
@@ -420,6 +424,7 @@ export function RecordingView({
                 }
               }}
               setMode={setExportMode}
+              setShowPreview={setShowExportPreview}
             />
           )}
           {isDesktop && (
@@ -473,11 +478,13 @@ export function RecordingView({
             latestTime={timeRange.before}
             mode={exportMode}
             range={exportRange}
+            showExportPreview={showExportPreview}
             allLabels={reviewFilterList.labels}
             allZones={reviewFilterList.zones}
             onUpdateFilter={updateFilter}
             setRange={setExportRange}
             setMode={setExportMode}
+            setShowExportPreview={setShowExportPreview}
           />
         </div>
       </div>

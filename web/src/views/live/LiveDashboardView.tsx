@@ -239,6 +239,7 @@ export default function LiveDashboardView({
                     ? "bg-blue-900 bg-opacity-60 focus:bg-blue-900 focus:bg-opacity-60"
                     : "bg-secondary"
                 }`}
+                aria-label="Use mobile grid layout"
                 size="xs"
                 onClick={() => setMobileLayout("grid")}
               >
@@ -250,6 +251,7 @@ export default function LiveDashboardView({
                     ? "bg-blue-900 bg-opacity-60 focus:bg-blue-900 focus:bg-opacity-60"
                     : "bg-secondary"
                 }`}
+                aria-label="Use mobile list layout"
                 size="xs"
                 onClick={() => setMobileLayout("list")}
               >
@@ -266,6 +268,7 @@ export default function LiveDashboardView({
                     ? "bg-selected text-primary"
                     : "bg-secondary text-secondary-foreground",
                 )}
+                aria-label="Enter layout editing mode"
                 size="xs"
                 onClick={() =>
                   setIsEditMode((prevIsEditMode) => !prevIsEditMode)

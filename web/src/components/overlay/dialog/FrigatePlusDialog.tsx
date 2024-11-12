@@ -12,7 +12,7 @@ import {
 import { Event } from "@/types/event";
 import { FrigateConfig } from "@/types/frigateConfig";
 import axios from "axios";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isDesktop } from "react-device-detect";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import useSWR from "swr";
@@ -60,6 +60,11 @@ export function FrigatePlusDialog({
 
   const [state, setState] = useState<SubmissionState>(
     upload?.plus_id ? "submitted" : "reviewing",
+  );
+
+  useEffect(
+    () => setState(upload?.plus_id ? "submitted" : "reviewing"),
+    [upload],
   );
 
   const onSubmitToPlus = useCallback(
@@ -126,25 +131,33 @@ export function FrigatePlusDialog({
         <DialogFooter className="flex flex-row justify-end gap-2">
           {state == "reviewing" && (
             <>
-              {dialog && <Button onClick={onClose}>Cancel</Button>}
+              {dialog && (
+                <Button aria-label="Cancel" onClick={onClose}>
+                  Cancel
+                </Button>
+              )}
               <Button
                 className="bg-success"
+                aria-label="Confirm this label for Frigate Plus"
                 onClick={() => {
                   setState("uploading");
                   onSubmitToPlus(false);
                 }}
               >
-                This is a {upload?.label}
+                This is {/^[aeiou]/i.test(upload?.label || "") ? "an" : "a"}{" "}
+                {upload?.label}
               </Button>
               <Button
                 className="text-white"
+                aria-label="Do not confirm this label for Frigate Plus"
                 variant="destructive"
                 onClick={() => {
                   setState("uploading");
                   onSubmitToPlus(true);
                 }}
               >
-                This is not a {upload?.label}
+                This is not {/^[aeiou]/i.test(upload?.label || "") ? "an" : "a"}{" "}
+                {upload?.label}
               </Button>
             </>
           )}

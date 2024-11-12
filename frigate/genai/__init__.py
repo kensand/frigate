@@ -4,7 +4,10 @@ import importlib
 import os
 from typing import Optional
 
-from frigate.config import CameraConfig, GenAIConfig, GenAIProviderEnum
+from playhouse.shortcuts import model_to_dict
+
+from frigate.config import CameraConfig, FrigateConfig, GenAIConfig, GenAIProviderEnum
+from frigate.models import Event
 
 PROVIDERS = {}
 
@@ -31,12 +34,13 @@ class GenAIClient:
         self,
         camera_config: CameraConfig,
         thumbnails: list[bytes],
-        metadata: dict[str, any],
+        event: Event,
     ) -> Optional[str]:
         """Generate a description for the frame."""
         prompt = camera_config.genai.object_prompts.get(
-            metadata["label"], camera_config.genai.prompt
-        ).format(**metadata)
+            event.label,
+            camera_config.genai.prompt,
+        ).format(**model_to_dict(event))
         return self._send(prompt, thumbnails)
 
     def _init_provider(self):
@@ -48,13 +52,19 @@ class GenAIClient:
         return None
 
 
-def get_genai_client(genai_config: GenAIConfig) -> Optional[GenAIClient]:
+def get_genai_client(config: FrigateConfig) -> Optional[GenAIClient]:
     """Get the GenAI client."""
-    if genai_config.enabled:
+    genai_config = config.genai
+    genai_cameras = [
+        c for c in config.cameras.values() if c.enabled and c.genai.enabled
+    ]
+
+    if genai_cameras:
         load_providers()
         provider = PROVIDERS.get(genai_config.provider)
         if provider:
             return provider(genai_config)
+
     return None
 
 

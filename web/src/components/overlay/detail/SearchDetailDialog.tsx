@@ -1,4 +1,4 @@
-import { isDesktop, isIOS, isMobile } from "react-device-detect";
+import { isDesktop, isIOS, isMobile, isSafari } from "react-device-detect";
 import { SearchResult } from "@/types/search";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
@@ -6,7 +6,7 @@ import { useFormattedTimestamp } from "@/hooks/use-date-utils";
 import { getIconForLabel } from "@/utils/iconUtil";
 import { useApiHost } from "@/api";
 import { Button } from "../../ui/button";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Textarea } from "../../ui/textarea";
@@ -20,14 +20,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { FrigatePlusDialog } from "../dialog/FrigatePlusDialog";
 import { Event } from "@/types/event";
-import HlsVideoPlayer from "@/components/player/HlsVideoPlayer";
 import { baseUrl } from "@/api/baseUrl";
 import { cn } from "@/lib/utils";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
-import { ASPECT_VERTICAL_LAYOUT, ASPECT_WIDE_LAYOUT } from "@/types/record";
-import { FaHistory, FaImage, FaRegListAlt, FaVideo } from "react-icons/fa";
+import {
+  FaCheckCircle,
+  FaChevronDown,
+  FaDownload,
+  FaHistory,
+  FaImage,
+  FaRegListAlt,
+  FaVideo,
+} from "react-icons/fa";
 import { FaRotate } from "react-icons/fa6";
 import ObjectLifecycle from "./ObjectLifecycle";
 import {
@@ -45,8 +50,26 @@ import {
 import { ReviewSegment } from "@/types/review";
 import { useNavigate } from "react-router-dom";
 import Chip from "@/components/indicators/Chip";
-import { capitalizeFirstLetter } from "@/utils/stringUtil";
+import { capitalizeAll } from "@/utils/stringUtil";
 import useGlobalMutation from "@/hooks/use-global-mutate";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
+import { Card, CardContent } from "@/components/ui/card";
+import useImageLoaded from "@/hooks/use-image-loaded";
+import ImageLoadingIndicator from "@/components/indicators/ImageLoadingIndicator";
+import { GenericVideoPlayer } from "@/components/player/GenericVideoPlayer";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { LuInfo } from "react-icons/lu";
+import { TooltipPortal } from "@radix-ui/react-tooltip";
 
 const SEARCH_TABS = [
   "details",
@@ -54,16 +77,20 @@ const SEARCH_TABS = [
   "video",
   "object lifecycle",
 ] as const;
-type SearchTab = (typeof SEARCH_TABS)[number];
+export type SearchTab = (typeof SEARCH_TABS)[number];
 
 type SearchDetailDialogProps = {
   search?: SearchResult;
+  page: SearchTab;
   setSearch: (search: SearchResult | undefined) => void;
+  setSearchPage: (page: SearchTab) => void;
   setSimilarity?: () => void;
 };
 export default function SearchDetailDialog({
   search,
+  page,
   setSearch,
+  setSearchPage,
   setSimilarity,
 }: SearchDetailDialogProps) {
   const { data: config } = useSWR<FrigateConfig>("config", {
@@ -72,15 +99,34 @@ export default function SearchDetailDialog({
 
   // tabs
 
-  const [page, setPage] = useState<SearchTab>("details");
-  const [pageToggle, setPageToggle] = useOptimisticState(page, setPage, 100);
+  const [pageToggle, setPageToggle] = useOptimisticState(
+    page,
+    setSearchPage,
+    100,
+  );
 
   // dialog and mobile page
 
   const [isOpen, setIsOpen] = useState(search != undefined);
 
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      setIsOpen(open);
+      if (!open) {
+        // short timeout to allow the mobile page animation
+        // to complete before updating the state
+        setTimeout(() => {
+          setSearch(undefined);
+        }, 300);
+      }
+    },
+    [setSearch],
+  );
+
   useEffect(() => {
-    setIsOpen(search != undefined);
+    if (search) {
+      setIsOpen(search != undefined);
+    }
   }, [search]);
 
   const searchTabs = useMemo(() => {
@@ -95,16 +141,15 @@ export default function SearchDetailDialog({
       views.splice(index, 1);
     }
 
-    if (search.data.type != "object") {
-      const index = views.indexOf("object lifecycle");
+    if (!search.has_clip) {
+      const index = views.indexOf("video");
       views.splice(index, 1);
     }
 
-    // TODO implement
-    //if (!config.semantic_search.enabled) {
-    //  const index = views.indexOf("similar-calendar");
-    //  views.splice(index, 1);
-    // }
+    if (search.data.type != "object" || !search.has_clip) {
+      const index = views.indexOf("object lifecycle");
+      views.splice(index, 1);
+    }
 
     return views;
   }, [config, search]);
@@ -115,9 +160,9 @@ export default function SearchDetailDialog({
     }
 
     if (!searchTabs.includes(pageToggle)) {
-      setPage("details");
+      setSearchPage("details");
     }
-  }, [pageToggle, searchTabs]);
+  }, [pageToggle, searchTabs, setSearchPage]);
 
   if (!search) {
     return;
@@ -132,14 +177,7 @@ export default function SearchDetailDialog({
   const Description = isDesktop ? DialogDescription : MobilePageDescription;
 
   return (
-    <Overlay
-      open={isOpen}
-      onOpenChange={(open) => {
-        if (!open) {
-          setSearch(undefined);
-        }
-      }}
-    >
+    <Overlay open={isOpen} onOpenChange={handleOpenChange}>
       <Content
         className={cn(
           "scrollbar-container overflow-y-auto",
@@ -148,7 +186,7 @@ export default function SearchDetailDialog({
           isMobile && "px-4",
         )}
       >
-        <Header onClose={() => setIsOpen(false)}>
+        <Header>
           <Title>Tracked Object Details</Title>
           <Description className="sr-only">Tracked object details</Description>
         </Header>
@@ -197,21 +235,19 @@ export default function SearchDetailDialog({
           />
         )}
         {page == "snapshot" && (
-          <FrigatePlusDialog
-            upload={
+          <ObjectSnapshotTab
+            search={
               {
                 ...search,
                 plus_id: config?.plus?.enabled ? search.plus_id : "not_enabled",
               } as unknown as Event
             }
-            dialog={false}
-            onClose={() => {}}
             onEventUploaded={() => {
               search.plus_id = "new_upload";
             }}
           />
         )}
-        {page == "video" && <VideoTab search={search} config={config} />}
+        {page == "video" && <VideoTab search={search} />}
         {page == "object lifecycle" && (
           <ObjectLifecycle
             className="w-full overflow-x-hidden"
@@ -263,7 +299,7 @@ function ObjectDetailsTab({
       return 0;
     }
 
-    const value = search.score ?? search.data.top_score;
+    const value = search.data.top_score ?? search.top_score ?? 0;
 
     return Math.round(value * 100);
   }, [search]);
@@ -274,7 +310,7 @@ function ObjectDetailsTab({
     }
 
     if (search.sub_label) {
-      return Math.round((search.data?.top_score ?? 0) * 100);
+      return Math.round((search.data?.sub_label_score ?? 0) * 100);
     } else {
       return undefined;
     }
@@ -299,6 +335,22 @@ function ObjectDetailsTab({
             (key.includes("events") ||
               key.includes("events/search") ||
               key.includes("events/explore")),
+          (currentData: SearchResult[][] | SearchResult[] | undefined) => {
+            if (!currentData) return currentData;
+            // optimistic update
+            return currentData
+              .flat()
+              .map((event) =>
+                event.id === search.id
+                  ? { ...event, data: { ...event.data, description: desc } }
+                  : event,
+              );
+          },
+          {
+            optimisticData: true,
+            rollbackOnError: true,
+            revalidate: false,
+          },
         );
       })
       .catch(() => {
@@ -309,33 +361,36 @@ function ObjectDetailsTab({
       });
   }, [desc, search, mutate]);
 
-  const regenerateDescription = useCallback(() => {
-    if (!search) {
-      return;
-    }
+  const regenerateDescription = useCallback(
+    (source: "snapshot" | "thumbnails") => {
+      if (!search) {
+        return;
+      }
 
-    axios
-      .put(`events/${search.id}/description/regenerate`)
-      .then((resp) => {
-        if (resp.status == 200) {
-          toast.success(
-            `A new description has been requested from ${capitalizeFirstLetter(config?.genai.provider ?? "Generative AI")}. Depending on the speed of your provider, the new description may take some time to regenerate.`,
+      axios
+        .put(`events/${search.id}/description/regenerate?source=${source}`)
+        .then((resp) => {
+          if (resp.status == 200) {
+            toast.success(
+              `A new description has been requested from ${capitalizeAll(config?.genai.provider.replaceAll("_", " ") ?? "Generative AI")}. Depending on the speed of your provider, the new description may take some time to regenerate.`,
+              {
+                position: "top-center",
+                duration: 7000,
+              },
+            );
+          }
+        })
+        .catch((error) => {
+          toast.error(
+            `Failed to call ${capitalizeAll(config?.genai.provider.replaceAll("_", " ") ?? "Generative AI")} for a new description: ${error.response.data.message}`,
             {
               position: "top-center",
-              duration: 7000,
             },
           );
-        }
-      })
-      .catch(() => {
-        toast.error(
-          `Failed to call ${capitalizeFirstLetter(config?.genai.provider ?? "Generative AI")} for a new description`,
-          {
-            position: "top-center",
-          },
-        );
-      });
-  }, [search, config]);
+        });
+    },
+    [search, config],
+  );
 
   return (
     <div className="flex flex-col gap-5">
@@ -350,7 +405,24 @@ function ObjectDetailsTab({
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <div className="text-sm text-primary/40">Score</div>
+            <div className="text-sm text-primary/40">
+              <div className="flex flex-row items-center gap-1">
+                Top Score
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <div className="cursor-pointer p-0">
+                      <LuInfo className="size-4" />
+                      <span className="sr-only">Info</span>
+                    </div>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80">
+                    The top score is the highest median score for the tracked
+                    object, so this may differ from the score shown on the
+                    search result thumbnail.
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
             <div className="text-sm">
               {score}%{subLabelScore && ` (${subLabelScore}%)`}
             </div>
@@ -380,17 +452,20 @@ function ObjectDetailsTab({
             draggable={false}
             src={`${apiHost}api/events/${search.id}/thumbnail.jpg`}
           />
-          <Button
-            onClick={() => {
-              setSearch(undefined);
+          {config?.semantic_search.enabled && (
+            <Button
+              aria-label="Find similar tracked objects"
+              onClick={() => {
+                setSearch(undefined);
 
-              if (setSimilarity) {
-                setSimilarity();
-              }
-            }}
-          >
-            Find Similar
-          </Button>
+                if (setSimilarity) {
+                  setSimilarity();
+                }
+              }}
+            >
+              Find Similar
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -402,10 +477,50 @@ function ObjectDetailsTab({
           onChange={(e) => setDesc(e.target.value)}
         />
         <div className="flex w-full flex-row justify-end gap-2">
-          {config?.genai.enabled && (
-            <Button onClick={regenerateDescription}>Regenerate</Button>
+          {config?.cameras[search.camera].genai.enabled && (
+            <div className="flex items-center">
+              <Button
+                className="rounded-r-none border-r-0"
+                aria-label="Regenerate tracked object description"
+                onClick={() => regenerateDescription("thumbnails")}
+              >
+                Regenerate
+              </Button>
+              {search.has_snapshot && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className="rounded-l-none border-l-0 px-2"
+                      aria-label="Expand regeneration menu"
+                    >
+                      <FaChevronDown className="size-3" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      aria-label="Regenerate from snapshot"
+                      onClick={() => regenerateDescription("snapshot")}
+                    >
+                      Regenerate from Snapshot
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      aria-label="Regenerate from thumbnails"
+                      onClick={() => regenerateDescription("thumbnails")}
+                    >
+                      Regenerate from Thumbnails
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
           )}
-          <Button variant="select" onClick={updateDescription}>
+          <Button
+            variant="select"
+            aria-label="Save"
+            onClick={updateDescription}
+          >
             Save
           </Button>
         </div>
@@ -414,92 +529,188 @@ function ObjectDetailsTab({
   );
 }
 
+type ObjectSnapshotTabProps = {
+  search: Event;
+  onEventUploaded: () => void;
+};
+function ObjectSnapshotTab({
+  search,
+  onEventUploaded,
+}: ObjectSnapshotTabProps) {
+  type SubmissionState = "reviewing" | "uploading" | "submitted";
+
+  const [imgRef, imgLoaded, onImgLoad] = useImageLoaded();
+
+  // upload
+
+  const [state, setState] = useState<SubmissionState>(
+    search?.plus_id ? "submitted" : "reviewing",
+  );
+
+  useEffect(
+    () => setState(search?.plus_id ? "submitted" : "reviewing"),
+    [search],
+  );
+
+  const onSubmitToPlus = useCallback(
+    async (falsePositive: boolean) => {
+      if (!search) {
+        return;
+      }
+
+      falsePositive
+        ? axios.put(`events/${search.id}/false_positive`)
+        : axios.post(`events/${search.id}/plus`, {
+            include_annotation: 1,
+          });
+
+      setState("submitted");
+      onEventUploaded();
+    },
+    [search, onEventUploaded],
+  );
+
+  return (
+    <div className="relative size-full">
+      <ImageLoadingIndicator
+        className="absolute inset-0 aspect-video min-h-[60dvh] w-full"
+        imgLoaded={imgLoaded}
+      />
+      <div className={`${imgLoaded ? "visible" : "invisible"}`}>
+        <TransformWrapper minScale={1.0} wheel={{ smoothStep: 0.005 }}>
+          <div className="flex flex-col space-y-3">
+            <TransformComponent
+              wrapperStyle={{
+                width: "100%",
+                height: "100%",
+              }}
+              contentStyle={{
+                position: "relative",
+                width: "100%",
+                height: "100%",
+              }}
+            >
+              {search?.id && (
+                <div className="relative mx-auto">
+                  <img
+                    ref={imgRef}
+                    className={`mx-auto max-h-[60dvh] bg-black object-contain`}
+                    src={`${baseUrl}api/events/${search?.id}/snapshot.jpg`}
+                    alt={`${search?.label}`}
+                    loading={isSafari ? "eager" : "lazy"}
+                    onLoad={() => {
+                      onImgLoad();
+                    }}
+                  />
+                  <div
+                    className={cn(
+                      "absolute right-1 top-1 flex items-center gap-2",
+                    )}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <a
+                          download
+                          href={`${baseUrl}api/events/${search?.id}/snapshot.jpg`}
+                        >
+                          <Chip className="cursor-pointer rounded-md bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500">
+                            <FaDownload className="size-4 text-white" />
+                          </Chip>
+                        </a>
+                      </TooltipTrigger>
+                      <TooltipPortal>
+                        <TooltipContent>Download</TooltipContent>
+                      </TooltipPortal>
+                    </Tooltip>
+                  </div>
+                </div>
+              )}
+            </TransformComponent>
+            {search.plus_id !== "not_enabled" && search.end_time && (
+              <Card className="p-1 text-sm md:p-2">
+                <CardContent className="flex flex-col items-center justify-between gap-3 p-2 md:flex-row">
+                  <div className={cn("flex flex-col space-y-3")}>
+                    <div
+                      className={
+                        "text-lg font-semibold leading-none tracking-tight"
+                      }
+                    >
+                      Submit To Frigate+
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Objects in locations you want to avoid are not false
+                      positives. Submitting them as false positives will confuse
+                      the model.
+                    </div>
+                  </div>
+
+                  <div className="flex flex-row justify-center gap-2 md:justify-end">
+                    {state == "reviewing" && (
+                      <>
+                        <Button
+                          className="bg-success"
+                          aria-label="Confirm this label for Frigate Plus"
+                          onClick={() => {
+                            setState("uploading");
+                            onSubmitToPlus(false);
+                          }}
+                        >
+                          This is{" "}
+                          {/^[aeiou]/i.test(search?.label || "") ? "an" : "a"}{" "}
+                          {search?.label}
+                        </Button>
+                        <Button
+                          className="text-white"
+                          aria-label="Do not confirm this label for Frigate Plus"
+                          variant="destructive"
+                          onClick={() => {
+                            setState("uploading");
+                            onSubmitToPlus(true);
+                          }}
+                        >
+                          This is not{" "}
+                          {/^[aeiou]/i.test(search?.label || "") ? "an" : "a"}{" "}
+                          {search?.label}
+                        </Button>
+                      </>
+                    )}
+                    {state == "uploading" && <ActivityIndicator />}
+                    {state == "submitted" && (
+                      <div className="flex flex-row items-center justify-center gap-2">
+                        <FaCheckCircle className="text-success" />
+                        Submitted
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TransformWrapper>
+      </div>
+    </div>
+  );
+}
+
 type VideoTabProps = {
   search: SearchResult;
-  config?: FrigateConfig;
 };
-function VideoTab({ search, config }: VideoTabProps) {
-  const [isLoading, setIsLoading] = useState(true);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const endTime = useMemo(() => search.end_time ?? Date.now() / 1000, [search]);
-
+export function VideoTab({ search }: VideoTabProps) {
   const navigate = useNavigate();
   const { data: reviewItem } = useSWR<ReviewSegment>([
     `review/event/${search.id}`,
   ]);
+  const endTime = useMemo(() => search.end_time ?? Date.now() / 1000, [search]);
 
-  const mainCameraAspect = useMemo(() => {
-    const camera = config?.cameras?.[search.camera];
-
-    if (!camera) {
-      return "normal";
-    }
-
-    const aspectRatio = camera.detect.width / camera.detect.height;
-
-    if (!aspectRatio) {
-      return "normal";
-    } else if (aspectRatio > ASPECT_WIDE_LAYOUT) {
-      return "wide";
-    } else if (aspectRatio < ASPECT_VERTICAL_LAYOUT) {
-      return "tall";
-    } else {
-      return "normal";
-    }
-  }, [config, search]);
-
-  const containerClassName = useMemo(() => {
-    if (mainCameraAspect == "wide") {
-      return "flex justify-center items-center";
-    } else if (mainCameraAspect == "tall") {
-      if (isDesktop) {
-        return "size-full flex flex-col justify-center items-center";
-      } else {
-        return "size-full";
-      }
-    } else {
-      return "";
-    }
-  }, [mainCameraAspect]);
-
-  const videoClassName = useMemo(() => {
-    if (mainCameraAspect == "wide") {
-      return "w-full aspect-wide";
-    } else if (mainCameraAspect == "tall") {
-      if (isDesktop) {
-        return "w-[50%] aspect-tall flex justify-center";
-      } else {
-        return "size-full";
-      }
-    } else {
-      return "w-full aspect-video";
-    }
-  }, [mainCameraAspect]);
+  const source = `${baseUrl}vod/${search.camera}/start/${search.start_time}/end/${endTime}/index.m3u8`;
 
   return (
-    <div className="relative flex flex-col">
-      <div className={`aspect-video ${containerClassName}`}>
-        {(isLoading || !reviewItem) && (
-          <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
-        )}
-        <div className={videoClassName}>
-          <HlsVideoPlayer
-            videoRef={videoRef}
-            currentSource={`${baseUrl}vod/${search.camera}/start/${search.start_time}/end/${endTime}/index.m3u8`}
-            hotKeys
-            visible
-            frigateControls={false}
-            fullscreen={false}
-            supportsFullscreen={false}
-            onPlaying={() => setIsLoading(false)}
-          />
-        </div>
-      </div>
-      {!isLoading && reviewItem && (
+    <GenericVideoPlayer source={source}>
+      {reviewItem && (
         <div
           className={cn(
-            "absolute top-2 flex items-center",
+            "absolute top-2 z-10 flex items-center gap-2",
             isIOS ? "right-8" : "right-2",
           )}
         >
@@ -519,10 +730,27 @@ function VideoTab({ search, config }: VideoTabProps) {
                 <FaHistory className="size-4 text-white" />
               </Chip>
             </TooltipTrigger>
-            <TooltipContent side="left">View in History</TooltipContent>
+            <TooltipPortal>
+              <TooltipContent>View in History</TooltipContent>
+            </TooltipPortal>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                download
+                href={`${baseUrl}api/${search.camera}/start/${search.start_time}/end/${endTime}/clip.mp4`}
+              >
+                <Chip className="cursor-pointer rounded-md bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500">
+                  <FaDownload className="size-4 text-white" />
+                </Chip>
+              </a>
+            </TooltipTrigger>
+            <TooltipPortal>
+              <TooltipContent>Download</TooltipContent>
+            </TooltipPortal>
           </Tooltip>
         </div>
       )}
-    </div>
+    </GenericVideoPlayer>
   );
 }

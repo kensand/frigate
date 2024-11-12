@@ -334,6 +334,9 @@ review:
       - car
       - person
     # Optional: required zones for an object to be marked as an alert (default: none)
+    # NOTE: when settings required zones globally, this zone must exist on all cameras
+    #       or the config will be considered invalid. In that case the required_zones
+    #       should be configured at the camera level.
     required_zones:
       - driveway
   # Optional: detections configuration
@@ -343,12 +346,20 @@ review:
       - car
       - person
     # Optional: required zones for an object to be marked as a detection (default: none)
+    # NOTE: when settings required zones globally, this zone must exist on all cameras
+    #       or the config will be considered invalid. In that case the required_zones
+    #       should be configured at the camera level.
     required_zones:
       - driveway
 
 # Optional: Motion configuration
 # NOTE: Can be overridden at the camera level
 motion:
+  # Optional: enables detection for the camera (default: True)
+  # NOTE: Motion detection is required for object detection,
+  #       setting this to False and leaving detect enabled
+  #       will result in an error on startup.
+  enabled: False
   # Optional: The threshold passed to cv2.threshold to determine if a pixel is different enough to be counted as motion. (default: shown below)
   # Increasing this value will make motion detection less sensitive and decreasing it will make motion detection more sensitive.
   # The value should be between 1 and 255.
@@ -507,6 +518,9 @@ semantic_search:
   enabled: False
   # Optional: Re-index embeddings database from historical tracked objects (default: shown below)
   reindex: False
+  # Optional: Set the model size used for embeddings. (default: shown below)
+  # NOTE: small model runs on CPU and large model runs on GPU
+  model_size: "small"
 
 # Optional: Configuration for AI generated tracked object descriptions
 # NOTE: Semantic Search must be enabled for this to do anything.
@@ -534,10 +548,12 @@ genai:
 # Uses https://github.com/AlexxIT/go2rtc (v1.9.2)
 go2rtc:
 
-# Optional: jsmpeg stream configuration for WebUI
+# Optional: Live stream configuration for WebUI.
+# NOTE: Can be overridden at the camera level
 live:
-  # Optional: Set the name of the stream that should be used for live view
-  # in frigate WebUI. (default: name of camera)
+  # Optional: Set the name of the stream configured in go2rtc
+  # that should be used for live view in frigate WebUI. (default: name of camera)
+  # NOTE: In most cases this should be set at the camera level only.
   stream_name: camera_name
   # Optional: Set the height of the jsmpeg stream. (default: 720)
   # This must be less than or equal to the height of the detect stream. Lower resolutions
@@ -726,6 +742,8 @@ cameras:
     genai:
       # Optional: Enable AI description generation (default: shown below)
       enabled: False
+      # Optional: Use the object snapshot instead of thumbnails for description generation (default: shown below)
+      use_snapshot: False
       # Optional: The default prompt for generating descriptions. Can use replacement
       # variables like "label", "sub_label", "camera" to make more dynamic. (default: shown below)
       prompt: "Describe the {label} in the sequence of images with as much detail as possible. Do not describe the background."
@@ -802,7 +820,7 @@ camera_groups:
       - side_cam
       - front_doorbell_cam
     # Required: icon used for group
-    icon: car
+    icon: LuCar
     # Required: index of this group
     order: 0
 ```

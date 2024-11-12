@@ -66,8 +66,7 @@ class FFMpegConverter(threading.Thread):
         frame_times: list[float],
         requestor: InterProcessRequestor,
     ):
-        threading.Thread.__init__(self)
-        self.name = f"{config.name}_preview_converter"
+        super().__init__(name=f"{config.name}_preview_converter")
         self.config = config
         self.frame_times = frame_times
         self.requestor = requestor
@@ -79,7 +78,7 @@ class FFMpegConverter(threading.Thread):
         # write a PREVIEW at fps and 1 key frame per clip
         self.ffmpeg_cmd = parse_preset_hardware_acceleration_encode(
             config.ffmpeg.ffmpeg_path,
-            config.ffmpeg.hwaccel_args,
+            "default",
             input="-f concat -y -protocol_whitelist pipe,file -safe 0 -threads 1 -i /dev/stdin",
             output=f"-threads 1 -g {PREVIEW_KEYFRAME_INTERVAL} -bf 0 -b:v {PREVIEW_QUALITY_BIT_RATES[self.config.record.preview.quality]} {FPS_VFR_PARAM} -movflags +faststart -pix_fmt yuv420p {self.path}",
             type=EncodeTypeEnum.preview,
@@ -155,6 +154,7 @@ class PreviewRecorder:
         self.start_time = 0
         self.last_output_time = 0
         self.output_frames = []
+
         if config.detect.width > config.detect.height:
             self.out_height = PREVIEW_HEIGHT
             self.out_width = (
@@ -275,7 +275,7 @@ class PreviewRecorder:
 
         return False
 
-    def write_frame_to_cache(self, frame_time: float, frame) -> None:
+    def write_frame_to_cache(self, frame_time: float, frame: np.ndarray) -> None:
         # resize yuv frame
         small_frame = np.zeros((self.out_height * 3 // 2, self.out_width), np.uint8)
         copy_yuv_to_position(
@@ -304,7 +304,7 @@ class PreviewRecorder:
         current_tracked_objects: list[dict[str, any]],
         motion_boxes: list[list[int]],
         frame_time: float,
-        frame,
+        frame: np.ndarray,
     ) -> bool:
         # check for updated record config
         _, updated_record_config = self.config_subscriber.check_for_update()
@@ -333,6 +333,10 @@ class PreviewRecorder:
                     self.output_frames,
                     self.requestor,
                 ).start()
+            else:
+                logger.debug(
+                    f"Not saving preview for {self.config.name} because there are no saved frames."
+                )
 
             # reset frame cache
             self.segment_end = (

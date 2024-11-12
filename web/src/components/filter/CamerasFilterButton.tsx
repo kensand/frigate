@@ -55,6 +55,7 @@ export function CamerasFilterButton({
   const trigger = (
     <Button
       className="flex items-center gap-2 capitalize"
+      aria-label="Cameras Filter"
       variant={selectedCameras?.length == undefined ? "default" : "select"}
       size="sm"
     >
@@ -69,6 +70,70 @@ export function CamerasFilterButton({
     </Button>
   );
   const content = (
+    <CamerasFilterContent
+      allCameras={allCameras}
+      groups={groups}
+      currentCameras={currentCameras}
+      setCurrentCameras={setCurrentCameras}
+      setOpen={setOpen}
+      updateCameraFilter={updateCameraFilter}
+    />
+  );
+
+  if (isMobile) {
+    return (
+      <Drawer
+        open={open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCurrentCameras(selectedCameras);
+          }
+
+          setOpen(open);
+        }}
+      >
+        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
+        <DrawerContent className="max-h-[75dvh] overflow-hidden">
+          {content}
+        </DrawerContent>
+      </Drawer>
+    );
+  }
+
+  return (
+    <DropdownMenu
+      modal={false}
+      open={open}
+      onOpenChange={(open) => {
+        if (!open) {
+          setCurrentCameras(selectedCameras);
+        }
+        setOpen(open);
+      }}
+    >
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent>{content}</DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+type CamerasFilterContentProps = {
+  allCameras: string[];
+  currentCameras: string[] | undefined;
+  groups: [string, CameraGroupConfig][];
+  setCurrentCameras: (cameras: string[] | undefined) => void;
+  setOpen: (open: boolean) => void;
+  updateCameraFilter: (cameras: string[] | undefined) => void;
+};
+export function CamerasFilterContent({
+  allCameras,
+  currentCameras,
+  groups,
+  setCurrentCameras,
+  setOpen,
+  updateCameraFilter,
+}: CamerasFilterContentProps) {
+  return (
     <>
       {isMobile && (
         <>
@@ -138,6 +203,7 @@ export function CamerasFilterButton({
       <DropdownMenuSeparator />
       <div className="flex items-center justify-evenly p-2">
         <Button
+          aria-label="Apply"
           variant="select"
           disabled={currentCameras?.length === 0}
           onClick={() => {
@@ -148,6 +214,7 @@ export function CamerasFilterButton({
           Apply
         </Button>
         <Button
+          aria-label="Reset"
           onClick={() => {
             setCurrentCameras(undefined);
             updateCameraFilter(undefined);
@@ -157,41 +224,5 @@ export function CamerasFilterButton({
         </Button>
       </div>
     </>
-  );
-
-  if (isMobile) {
-    return (
-      <Drawer
-        open={open}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCurrentCameras(selectedCameras);
-          }
-
-          setOpen(open);
-        }}
-      >
-        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
-        <DrawerContent className="max-h-[75dvh] overflow-hidden">
-          {content}
-        </DrawerContent>
-      </Drawer>
-    );
-  }
-
-  return (
-    <DropdownMenu
-      modal={false}
-      open={open}
-      onOpenChange={(open) => {
-        if (!open) {
-          setCurrentCameras(selectedCameras);
-        }
-        setOpen(open);
-      }}
-    >
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent>{content}</DropdownMenuContent>
-    </DropdownMenu>
   );
 }

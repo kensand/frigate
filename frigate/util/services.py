@@ -257,29 +257,10 @@ def get_amd_gpu_stats() -> dict[str, str]:
 
 def get_intel_gpu_stats() -> dict[str, str]:
     """Get stats using intel_gpu_top."""
-    intel_gpu_top_command = [
-        "timeout",
-        "0.5s",
-        "intel_gpu_top",
-        "-J",
-        "-o",
-        "-",
-        "-s",
-        "1",
-    ]
 
-    p = sp.run(
-        intel_gpu_top_command,
-        encoding="ascii",
-        capture_output=True,
-    )
-
-    # timeout has a non-zero returncode when timeout is reached
-    if p.returncode != 124:
-        logger.error(f"Unable to poll intel GPU stats: {p.stderr}")
-        return None
-    else:
-        reading = "".join(p.stdout.split())
+    def get_stats_manually(output: str) -> dict[str, str]:
+        """Find global stats via regex when json fails to parse."""
+        reading = "".join(output)
         results: dict[str, str] = {}
 
         # render is used for qsv
@@ -310,10 +291,99 @@ def get_intel_gpu_stats() -> dict[str, str]:
         results["mem"] = "-%"
         return results
 
+    intel_gpu_top_command = [
+        "timeout",
+        "0.5s",
+        "intel_gpu_top",
+        "-J",
+        "-o",
+        "-",
+        "-s",
+        "1",
+    ]
+
+    p = sp.run(
+        intel_gpu_top_command,
+        encoding="ascii",
+        capture_output=True,
+    )
+
+    # timeout has a non-zero returncode when timeout is reached
+    if p.returncode != 124:
+        logger.error(f"Unable to poll intel GPU stats: {p.stderr}")
+        return None
+    else:
+        output = "".join(p.stdout.split())
+
+        try:
+            data = json.loads(f"[{output}]")
+        except json.JSONDecodeError:
+            return get_stats_manually(output)
+
+        results: dict[str, str] = {}
+        render = {"global": []}
+        video = {"global": []}
+
+        for block in data:
+            global_engine = block.get("engines")
+
+            if global_engine:
+                render_frame = global_engine.get("Render/3D/0", {}).get("busy")
+                video_frame = global_engine.get("Video/0", {}).get("busy")
+
+                if render_frame is not None:
+                    render["global"].append(float(render_frame))
+
+                if video_frame is not None:
+                    video["global"].append(float(video_frame))
+
+            clients = block.get("clients", {})
+
+            if clients and len(clients):
+                for client_block in clients.values():
+                    key = client_block["pid"]
+
+                    if render.get(key) is None:
+                        render[key] = []
+                        video[key] = []
+
+                    client_engine = client_block.get("engine-classes", {})
+
+                    render_frame = client_engine.get("Render/3D", {}).get("busy")
+                    video_frame = client_engine.get("Video", {}).get("busy")
+
+                    if render_frame is not None:
+                        render[key].append(float(render_frame))
+
+                    if video_frame is not None:
+                        video[key].append(float(video_frame))
+
+        if render["global"]:
+            results["gpu"] = (
+                f"{round(((sum(render['global']) / len(render['global'])) + (sum(video['global']) / len(video['global']))) / 2, 2)}%"
+            )
+            results["mem"] = "-%"
+
+        if len(render.keys()) > 1:
+            results["clients"] = {}
+
+            for key in render.keys():
+                if key == "global" or not render[key] or not video[key]:
+                    continue
+
+                results["clients"][key] = (
+                    f"{round(((sum(render[key]) / len(render[key])) + (sum(video[key]) / len(video[key]))) / 2, 2)}%"
+                )
+
+        return results
+
 
 def try_get_info(f, h, default="N/A"):
     try:
-        v = f(h)
+        if h:
+            v = f(h)
+        else:
+            v = f()
     except nvml.NVMLError_NotSupported:
         v = default
     return v
@@ -330,6 +400,8 @@ def get_nvidia_gpu_stats() -> dict[int, dict]:
             util = try_get_info(nvml.nvmlDeviceGetUtilizationRates, handle)
             enc = try_get_info(nvml.nvmlDeviceGetEncoderUtilization, handle)
             dec = try_get_info(nvml.nvmlDeviceGetDecoderUtilization, handle)
+            pstate = try_get_info(nvml.nvmlDeviceGetPowerState, handle, default=None)
+
             if util != "N/A":
                 gpu_util = util.gpu
             else:
@@ -356,6 +428,7 @@ def get_nvidia_gpu_stats() -> dict[int, dict]:
                 "mem": gpu_mem_util,
                 "enc": enc_util,
                 "dec": dec_util,
+                "pstate": pstate or "unknown",
             }
     except Exception:
         pass
@@ -404,6 +477,31 @@ def vainfo_hwaccel(device_name: Optional[str] = None) -> sp.CompletedProcess:
         else ["vainfo", "--display", "drm", "--device", f"/dev/dri/{device_name}"]
     )
     return sp.run(ffprobe_cmd, capture_output=True)
+
+
+def get_nvidia_driver_info() -> dict[str, any]:
+    """Get general hardware info for nvidia GPU."""
+    results = {}
+    try:
+        nvml.nvmlInit()
+        deviceCount = nvml.nvmlDeviceGetCount()
+        for i in range(deviceCount):
+            handle = nvml.nvmlDeviceGetHandleByIndex(i)
+            driver = try_get_info(nvml.nvmlSystemGetDriverVersion, None, default=None)
+            cuda_compute = try_get_info(
+                nvml.nvmlDeviceGetCudaComputeCapability, handle, default=None
+            )
+            vbios = try_get_info(nvml.nvmlDeviceGetVbiosVersion, handle, default=None)
+            results[i] = {
+                "name": nvml.nvmlDeviceGetName(handle),
+                "driver": driver or "unknown",
+                "cuda_compute": cuda_compute or "unknown",
+                "vbios": vbios or "unknown",
+            }
+    except Exception:
+        pass
+    finally:
+        return results
 
 
 def auto_detect_hwaccel() -> str:
@@ -486,7 +584,7 @@ async def get_video_properties(
     width = height = 0
 
     try:
-        # Open the video stream
+        # Open the video stream using OpenCV
         video = cv2.VideoCapture(url)
 
         # Check if the video stream was opened successfully

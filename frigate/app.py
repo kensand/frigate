@@ -6,13 +6,12 @@ import secrets
 import shutil
 from multiprocessing import Queue
 from multiprocessing.synchronize import Event as MpEvent
-from typing import Any, Optional
+from typing import Optional
 
 import psutil
 import uvicorn
 from peewee_migrate import Router
 from playhouse.sqlite_ext import SqliteExtDatabase
-from playhouse.sqliteq import SqliteQueueDatabase
 
 import frigate.util as util
 from frigate.api.auth import hash_password
@@ -29,15 +28,16 @@ from frigate.comms.mqtt import MqttClient
 from frigate.comms.webpush import WebPushClient
 from frigate.comms.ws import WebSocketClient
 from frigate.comms.zmq_proxy import ZmqProxy
+from frigate.config.config import FrigateConfig
 from frigate.const import (
     CACHE_DIR,
     CLIPS_DIR,
     CONFIG_DIR,
-    DEFAULT_DB_PATH,
     EXPORT_DIR,
     MODEL_CACHE_DIR,
     RECORD_DIR,
 )
+from frigate.db.sqlitevecq import SqliteVecQueueDatabase
 from frigate.embeddings import EmbeddingsContext, manage_embeddings
 from frigate.events.audio import AudioProcessor
 from frigate.events.cleanup import EventCleanup
@@ -77,10 +77,8 @@ logger = logging.getLogger(__name__)
 
 
 class FrigateApp:
-    audio_process: Optional[mp.Process] = None
-
-    # TODO: Fix FrigateConfig usage, so we can properly annotate it here without mypy erroring out.
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: FrigateConfig) -> None:
+        self.audio_process: Optional[mp.Process] = None
         self.stop_event: MpEvent = mp.Event()
         self.detection_queue: Queue = mp.Queue()
         self.detectors: dict[str, ObjectDetectProcess] = {}
@@ -90,6 +88,7 @@ class FrigateApp:
         self.camera_metrics: dict[str, CameraMetrics] = {}
         self.ptz_metrics: dict[str, PTZMetrics] = {}
         self.processes: dict[str, int] = {}
+        self.embeddings: Optional[EmbeddingsContext] = None
         self.region_grids: dict[str, list[list[dict[str, int]]]] = {}
         self.config = config
 
@@ -148,13 +147,6 @@ class FrigateApp:
                     f.write(str(datetime.datetime.now().timestamp()))
             except PermissionError:
                 logger.error("Unable to write to /config to save DB state")
-
-        # Migrate DB location
-        old_db_path = DEFAULT_DB_PATH
-        if not os.path.isfile(self.config.database.path) and os.path.isfile(
-            old_db_path
-        ):
-            os.rename(old_db_path, self.config.database.path)
 
         # Migrate DB schema
         migrate_db = SqliteExtDatabase(self.config.database.path)
@@ -229,11 +221,8 @@ class FrigateApp:
 
     def init_embeddings_manager(self) -> None:
         if not self.config.semantic_search.enabled:
-            self.embeddings = None
             return
 
-        # Create a client for other processes to use
-        self.embeddings = EmbeddingsContext()
         embedding_process = util.Process(
             target=manage_embeddings,
             name="embeddings_manager",
@@ -248,7 +237,7 @@ class FrigateApp:
     def bind_database(self) -> None:
         """Bind db to the main process."""
         # NOTE: all db accessing processes need to be created before the db can be bound to the main process
-        self.db = SqliteQueueDatabase(
+        self.db = SqliteVecQueueDatabase(
             self.config.database.path,
             pragmas={
                 "auto_vacuum": "FULL",  # Does not defragment database
@@ -258,6 +247,7 @@ class FrigateApp:
             timeout=max(
                 60, 10 * len([c for c in self.config.cameras.values() if c.enabled])
             ),
+            load_vec_extension=self.config.semantic_search.enabled,
         )
         models = [
             Event,
@@ -281,7 +271,12 @@ class FrigateApp:
             except PermissionError:
                 logger.error("Unable to write to /config to save export state")
 
-            migrate_exports(self.config.ffmpeg, self.config.cameras.keys())
+            migrate_exports(self.config.ffmpeg, list(self.config.cameras.keys()))
+
+    def init_embeddings_client(self) -> None:
+        if self.config.semantic_search.enabled:
+            # Create a client for other processes to use
+            self.embeddings = EmbeddingsContext(self.db)
 
     def init_external_event_processor(self) -> None:
         self.external_event_processor = ExternalEventProcessor(self.config)
@@ -325,7 +320,9 @@ class FrigateApp:
                 largest_frame = max(
                     [
                         det.model.height * det.model.width * 3
-                        for (name, det) in self.config.detectors.items()
+                        if det.model is not None
+                        else 320
+                        for det in self.config.detectors.values()
                     ]
                 )
                 shm_in = mp.shared_memory.SharedMemory(
@@ -392,6 +389,7 @@ class FrigateApp:
 
         # create or update region grids for each camera
         for camera in self.config.cameras.values():
+            assert camera.name is not None
             self.region_grids[camera.name] = get_camera_regions_grid(
                 camera.name,
                 camera.detect,
@@ -470,7 +468,7 @@ class FrigateApp:
         self.event_processor.start()
 
     def start_event_cleanup(self) -> None:
-        self.event_cleanup = EventCleanup(self.config, self.stop_event)
+        self.event_cleanup = EventCleanup(self.config, self.stop_event, self.db)
         self.event_cleanup.start()
 
     def start_record_cleanup(self) -> None:
@@ -505,15 +503,18 @@ class FrigateApp:
             min_req_shm += 8
 
         available_shm = total_shm - min_req_shm
-        cam_total_frame_size = 0
+        cam_total_frame_size = 0.0
 
         for camera in self.config.cameras.values():
-            if camera.enabled:
+            if camera.enabled and camera.detect.width and camera.detect.height:
                 cam_total_frame_size += round(
                     (camera.detect.width * camera.detect.height * 1.5 + 270480)
                     / 1048576,
                     1,
                 )
+
+        if cam_total_frame_size == 0.0:
+            return 0
 
         shm_frame_count = min(50, int(available_shm / (cam_total_frame_size)))
 
@@ -521,9 +522,9 @@ class FrigateApp:
             f"Calculated total camera size {available_shm} / {cam_total_frame_size} :: {shm_frame_count} frames for each camera in SHM"
         )
 
-        if shm_frame_count < 10:
+        if shm_frame_count < 20:
             logger.warning(
-                f"The current SHM size of {total_shm}MB is too small, recommend increasing it to at least {round(min_req_shm + cam_total_frame_size * 10)}MB."
+                f"The current SHM size of {total_shm}MB is too small, recommend increasing it to at least {round(min_req_shm + cam_total_frame_size * 20)}MB."
             )
 
         return shm_frame_count
@@ -539,6 +540,7 @@ class FrigateApp:
                     {
                         User.username: "admin",
                         User.password_hash: password_hash,
+                        User.notification_tokens: [],
                     }
                 ).execute()
 
@@ -555,7 +557,11 @@ class FrigateApp:
                 password_hash = hash_password(
                     password, iterations=self.config.auth.hash_iterations
                 )
-                User.replace(username="admin", password_hash=password_hash).execute()
+                User.replace(
+                    username="admin",
+                    password_hash=password_hash,
+                    notification_tokens=[],
+                ).execute()
 
                 logger.info("********************************************************")
                 logger.info("********************************************************")
@@ -577,13 +583,14 @@ class FrigateApp:
         self.init_onvif()
         self.init_recording_manager()
         self.init_review_segment_manager()
-        self.init_embeddings_manager()
         self.init_go2rtc()
+        self.start_detectors()
+        self.init_embeddings_manager()
         self.bind_database()
         self.check_db_data_migrations()
         self.init_inter_process_communicator()
         self.init_dispatcher()
-        self.start_detectors()
+        self.init_embeddings_client()
         self.start_video_output_processor()
         self.start_ptz_autotracker()
         self.init_historical_regions()
@@ -695,7 +702,7 @@ class FrigateApp:
 
         # Save embeddings stats to disk
         if self.embeddings:
-            self.embeddings.save_stats()
+            self.embeddings.stop()
 
         # Stop Communicators
         self.inter_process_communicator.stop()
