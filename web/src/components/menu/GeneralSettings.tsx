@@ -24,7 +24,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import { Button } from "../ui/button";
+
 import { Link } from "react-router-dom";
 import { CgDarkMode } from "react-icons/cg";
 import {
@@ -33,30 +33,15 @@ import {
   useTheme,
 } from "@/context/theme-provider";
 import { IoColorPalette } from "react-icons/io5";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
-import { useEffect, useState } from "react";
+
+import { useState } from "react";
 import { useRestart } from "@/api/ws";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "../ui/sheet";
+
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import ActivityIndicator from "../indicators/activity-indicator";
 import { isDesktop, isMobile } from "react-device-detect";
 import { Drawer, DrawerContent, DrawerTrigger } from "../ui/drawer";
 import {
@@ -68,8 +53,8 @@ import {
 } from "../ui/dialog";
 import { TooltipPortal } from "@radix-ui/react-tooltip";
 import { cn } from "@/lib/utils";
-import { baseUrl } from "@/api/baseUrl";
 import useSWR from "swr";
+import RestartDialog from "../overlay/dialog/RestartDialog";
 
 type GeneralSettingsProps = {
   className?: string;
@@ -83,34 +68,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
 
   const { theme, colorScheme, setTheme, setColorScheme } = useTheme();
   const [restartDialogOpen, setRestartDialogOpen] = useState(false);
-  const [restartingSheetOpen, setRestartingSheetOpen] = useState(false);
-  const [countdown, setCountdown] = useState(60);
-
   const { send: sendRestart } = useRestart();
-
-  useEffect(() => {
-    let countdownInterval: NodeJS.Timeout;
-
-    if (restartingSheetOpen) {
-      countdownInterval = setInterval(() => {
-        setCountdown((prevCountdown) => prevCountdown - 1);
-      }, 1000);
-    }
-
-    return () => {
-      clearInterval(countdownInterval);
-    };
-  }, [restartingSheetOpen]);
-
-  useEffect(() => {
-    if (countdown === 0) {
-      window.location.href = baseUrl;
-    }
-  }, [countdown]);
-
-  const handleForceReload = () => {
-    window.location.href = baseUrl;
-  };
 
   const Container = isDesktop ? DropdownMenu : Drawer;
   const Trigger = isDesktop ? DropdownMenuTrigger : DrawerTrigger;
@@ -176,6 +134,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                       ? "cursor-pointer"
                       : "flex items-center p-2 text-sm"
                   }
+                  aria-label="Log out"
                 >
                   <a className="flex" href={logoutUrl}>
                     <LuLogOut className="mr-2 size-4" />
@@ -194,6 +153,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                       ? "cursor-pointer"
                       : "flex w-full items-center p-2 text-sm"
                   }
+                  aria-label="System metrics"
                 >
                   <LuActivity className="mr-2 size-4" />
                   <span>System metrics</span>
@@ -206,6 +166,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                       ? "cursor-pointer"
                       : "flex w-full items-center p-2 text-sm"
                   }
+                  aria-label="System logs"
                 >
                   <LuList className="mr-2 size-4" />
                   <span>System logs</span>
@@ -224,6 +185,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                       ? "cursor-pointer"
                       : "flex w-full items-center p-2 text-sm"
                   }
+                  aria-label="Settings"
                 >
                   <LuSettings className="mr-2 size-4" />
                   <span>Settings</span>
@@ -236,6 +198,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                       ? "cursor-pointer"
                       : "flex w-full items-center p-2 text-sm"
                   }
+                  aria-label="Configuration editor"
                 >
                   <LuPenSquare className="mr-2 size-4" />
                   <span>Configuration editor</span>
@@ -269,6 +232,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                           ? "cursor-pointer"
                           : "flex items-center p-2 text-sm"
                       }
+                      aria-label="Light mode"
                       onClick={() => setTheme("light")}
                     >
                       {theme === "light" ? (
@@ -286,6 +250,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                           ? "cursor-pointer"
                           : "flex items-center p-2 text-sm"
                       }
+                      aria-label="Dark mode"
                       onClick={() => setTheme("dark")}
                     >
                       {theme === "dark" ? (
@@ -303,6 +268,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                           ? "cursor-pointer"
                           : "flex items-center p-2 text-sm"
                       }
+                      aria-label="Use the system settings for light or dark mode"
                       onClick={() => setTheme("system")}
                     >
                       {theme === "system" ? (
@@ -343,6 +309,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                             ? "cursor-pointer"
                             : "flex items-center p-2 text-sm"
                         }
+                        aria-label={`Color scheme - ${scheme}`}
                         onClick={() => setColorScheme(scheme)}
                       >
                         {scheme === colorScheme ? (
@@ -370,6 +337,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                 className={
                   isDesktop ? "cursor-pointer" : "flex items-center p-2 text-sm"
                 }
+                aria-label="Frigate documentation"
               >
                 <LuLifeBuoy className="mr-2 size-4" />
                 <span>Documentation</span>
@@ -383,6 +351,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
                 className={
                   isDesktop ? "cursor-pointer" : "flex items-center p-2 text-sm"
                 }
+                aria-label="Frigate Github"
               >
                 <LuGithub className="mr-2 size-4" />
                 <span>GitHub</span>
@@ -393,6 +362,7 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
               className={
                 isDesktop ? "cursor-pointer" : "flex items-center p-2 text-sm"
               }
+              aria-label="Restart Frigate"
               onClick={() => setRestartDialogOpen(true)}
             >
               <LuRotateCw className="mr-2 size-4" />
@@ -401,59 +371,11 @@ export default function GeneralSettings({ className }: GeneralSettingsProps) {
           </div>
         </Content>
       </Container>
-      {restartDialogOpen && (
-        <AlertDialog
-          open={restartDialogOpen}
-          onOpenChange={() => setRestartDialogOpen(false)}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                Are you sure you want to restart Frigate?
-              </AlertDialogTitle>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  setRestartingSheetOpen(true);
-                  sendRestart("restart");
-                }}
-              >
-                Restart
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
-      {restartingSheetOpen && (
-        <>
-          <Sheet
-            open={restartingSheetOpen}
-            onOpenChange={() => setRestartingSheetOpen(false)}
-          >
-            <SheetContent
-              side="top"
-              onInteractOutside={(e) => e.preventDefault()}
-            >
-              <div className="flex flex-col items-center">
-                <ActivityIndicator />
-                <SheetHeader className="mt-5 text-center">
-                  <SheetTitle className="text-center">
-                    Frigate is Restarting
-                  </SheetTitle>
-                  <SheetDescription className="text-center">
-                    <p>This page will reload in {countdown} seconds.</p>
-                  </SheetDescription>
-                </SheetHeader>
-                <Button size="lg" className="mt-5" onClick={handleForceReload}>
-                  Force Reload Now
-                </Button>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </>
-      )}
+      <RestartDialog
+        isOpen={restartDialogOpen}
+        onClose={() => setRestartDialogOpen(false)}
+        onRestart={() => sendRestart("restart")}
+      />
     </>
   );
 }

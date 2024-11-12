@@ -13,7 +13,15 @@ Use of the bundled go2rtc is optional. You can still configure FFmpeg to connect
 
 # Setup a go2rtc stream
 
-First, you will want to configure go2rtc to connect to your camera stream by adding the stream you want to use for live view in your Frigate config file. If you set the stream name under go2rtc to match the name of your camera, it will automatically be mapped and you will get additional live view options for the camera. Avoid changing any other parts of your config at this step. Note that go2rtc supports [many different stream types](https://github.com/AlexxIT/go2rtc/tree/v1.9.4#module-streams), not just rtsp.
+First, you will want to configure go2rtc to connect to your camera stream by adding the stream you want to use for live view in your Frigate config file. Avoid changing any other parts of your config at this step. Note that go2rtc supports [many different stream types](https://github.com/AlexxIT/go2rtc/tree/v1.9.2#module-streams), not just rtsp.
+
+:::tip
+
+For the best experience, you should set the stream name under `go2rtc` to match the name of your camera so that Frigate will automatically map it and be able to use better live view options for the camera.
+
+See [the live view docs](../configuration/live.md#setting-stream-for-live-ui) for more information.
+
+:::
 
 ```yaml
 go2rtc:
@@ -22,7 +30,7 @@ go2rtc:
       - rtsp://user:password@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2
 ```
 
-The easiest live view to get working is MSE. After adding this to the config, restart Frigate and try to watch the live stream by selecting MSE in the dropdown after clicking on the camera.
+After adding this to the config, restart Frigate and try to watch the live stream for a single camera by clicking on it from the dashboard. It should look much clearer and more fluent than the original jsmpeg stream.
 
 
 ### What if my video doesn't play?
@@ -39,14 +47,14 @@ The easiest live view to get working is MSE. After adding this to the config, re
 
 - Check Video Codec:
     - If the camera stream works in go2rtc but not in your browser, the video codec might be unsupported.
-    - If using H265, switch to H264. Refer to [video codec compatibility](https://github.com/AlexxIT/go2rtc/tree/v1.9.4#codecs-madness) in go2rtc documentation.
-    - If unable to switch from H265 to H264, or if the stream format is different (e.g., MJPEG), re-encode the video using [FFmpeg parameters](https://github.com/AlexxIT/go2rtc/tree/v1.9.4#source-ffmpeg). It supports rotating and resizing video feeds and hardware acceleration. Keep in mind that transcoding video from one format to another is a resource intensive task and you may be better off using the built-in jsmpeg view.
+    - If using H265, switch to H264. Refer to [video codec compatibility](https://github.com/AlexxIT/go2rtc/tree/v1.9.2#codecs-madness) in go2rtc documentation.
+    - If unable to switch from H265 to H264, or if the stream format is different (e.g., MJPEG), re-encode the video using [FFmpeg parameters](https://github.com/AlexxIT/go2rtc/tree/v1.9.2#source-ffmpeg). It supports rotating and resizing video feeds and hardware acceleration. Keep in mind that transcoding video from one format to another is a resource intensive task and you may be better off using the built-in jsmpeg view.
         ```yaml
         go2rtc:
           streams:
             back:
               - rtsp://user:password@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2
-              - "ffmpeg:back#video=h264"
+              - "ffmpeg:back#video=h264#hardware"
         ```
 
 - Switch to FFmpeg if needed: 
@@ -58,9 +66,8 @@ The easiest live view to get working is MSE. After adding this to the config, re
               - ffmpeg:rtsp://user:password@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2
         ```
 
-- If you can see the video but do not have audio, this is most likely because your
-camera's audio stream is not AAC.
-    - If possible, update your camera's audio settings to AAC.
+    - If you can see the video but do not have audio, this is most likely because your camera's audio stream codec is not AAC.
+    - If possible, update your camera's audio settings to AAC in your camera's firmware.
     - If your cameras do not support AAC audio, you will need to tell go2rtc to re-encode the audio to AAC on demand if you want audio. This will use additional CPU and add some latency. To add AAC audio on demand, you can update your go2rtc config as follows:
         ```yaml
         go2rtc:
@@ -77,7 +84,7 @@ camera's audio stream is not AAC.
           streams:
             back:
               - rtsp://user:password@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2
-              - "ffmpeg:back#video=h264#audio=aac"
+              - "ffmpeg:back#video=h264#audio=aac#hardware"
         ```
 
         When using the ffmpeg module, you would add AAC audio like this:
@@ -86,7 +93,7 @@ camera's audio stream is not AAC.
         go2rtc:
           streams:
             back:
-              - "ffmpeg:rtsp://user:password@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2#video=copy#audio=copy#audio=aac"
+              - "ffmpeg:rtsp://user:password@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2#video=copy#audio=copy#audio=aac#hardware"
         ```
 
 :::warning
@@ -102,4 +109,4 @@ section.
 ## Next steps
 
 1. If the stream you added to go2rtc is also used by Frigate for the `record` or `detect` role, you can migrate your config to pull from the RTSP restream to reduce the number of connections to your camera as shown [here](/configuration/restream#reduce-connections-to-camera).
-1. You may also prefer to [setup WebRTC](/configuration/live#webrtc-extra-configuration) for slightly lower latency than MSE. Note that WebRTC only supports h264 and specific audio formats.
+2. You may also prefer to [setup WebRTC](/configuration/live#webrtc-extra-configuration) for slightly lower latency than MSE. Note that WebRTC only supports h264 and specific audio formats and may require opening ports on your router.

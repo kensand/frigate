@@ -81,15 +81,15 @@ You can calculate the **minimum** shm size for each camera with the following fo
 
 ```console
 # Replace <width> and <height>
-$ python -c 'print("{:.2f}MB".format((<width> * <height> * 1.5 * 10 + 270480) / 1048576))'
+$ python -c 'print("{:.2f}MB".format((<width> * <height> * 1.5 * 20 + 270480) / 1048576))'
 
-# Example for 1280x720
-$ python -c 'print("{:.2f}MB".format((1280 * 720 * 1.5 * 10 + 270480) / 1048576))'
-13.44MB
+# Example for 1280x720, including logs
+$ python -c 'print("{:.2f}MB".format((1280 * 720 * 1.5 * 20 + 270480) / 1048576)) + 40'
+46.63MB
 
 # Example for eight cameras detecting at 1280x720, including logs
-$ python -c 'print("{:.2f}MB".format(((1280 * 720 * 1.5 * 10 + 270480) / 1048576) * 8 + 40))'
-136.99MB
+$ python -c 'print("{:.2f}MB".format(((1280 * 720 * 1.5 * 20 + 270480) / 1048576) * 8 + 40))'
+253MB
 ```
 
 The shm size cannot be set per container for Home Assistant add-ons. However, this is probably not required since by default Home Assistant Supervisor allocates `/dev/shm` with half the size of your total memory. If your machine has 8GB of memory, chances are that Frigate will have access to up to 4GB without any additional configuration.
@@ -194,7 +194,7 @@ services:
     privileged: true # this may not be necessary for all setups
     restart: unless-stopped
     image: ghcr.io/blakeblackshear/frigate:stable
-    shm_size: "64mb" # update for your cameras based on calculation above
+    shm_size: "512mb" # update for your cameras based on calculation above
     devices:
       - /dev/bus/usb:/dev/bus/usb # Passes the USB Coral, needs to be modified for other versions
       - /dev/apex_0:/dev/apex_0 # Passes a PCIe Coral, follow driver instructions here https://coral.ai/docs/m2/get-started/#2a-on-linux
@@ -250,10 +250,7 @@ The community supported docker image tags for the current stable version are:
 - `stable-tensorrt-jp5` - Frigate build optimized for nvidia Jetson devices running Jetpack 5
 - `stable-tensorrt-jp4` - Frigate build optimized for nvidia Jetson devices running Jetpack 4.6
 - `stable-rk` - Frigate build for SBCs with Rockchip SoC
-- `stable-rocm` - Frigate build for [AMD GPUs and iGPUs](../configuration/object_detectors.md#amdrocm-gpu-detector), all drivers
-  - `stable-rocm-gfx900` - AMD gfx900 driver only
-  - `stable-rocm-gfx1030` - AMD gfx1030 driver only
-  - `stable-rocm-gfx1100` - AMD gfx1100 driver only
+- `stable-rocm` - Frigate build for [AMD GPUs](../configuration/object_detectors.md#amdrocm-gpu-detector)
   - `stable-h8l` - Frigate build for the Hailo-8L M.2 PICe Raspberry Pi 5 hat
 
 ## Home Assistant Addon

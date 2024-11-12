@@ -27,6 +27,11 @@ class InputTensorEnum(str, Enum):
     nhwc = "nhwc"
 
 
+class InputDTypeEnum(str, Enum):
+    float = "float"
+    int = "int"
+
+
 class ModelTypeEnum(str, Enum):
     ssd = "ssd"
     yolox = "yolox"
@@ -53,12 +58,16 @@ class ModelConfig(BaseModel):
     input_pixel_format: PixelFormatEnum = Field(
         default=PixelFormatEnum.rgb, title="Model Input Pixel Color Format"
     )
+    input_dtype: InputDTypeEnum = Field(
+        default=InputDTypeEnum.int, title="Model Input D Type"
+    )
     model_type: ModelTypeEnum = Field(
         default=ModelTypeEnum.ssd, title="Object Detection Model Type"
     )
     _merged_labelmap: Optional[Dict[int, str]] = PrivateAttr()
     _colormap: Dict[int, Tuple[int, int, int]] = PrivateAttr()
     _all_attributes: list[str] = PrivateAttr()
+    _all_attribute_logos: list[str] = PrivateAttr()
     _model_hash: str = PrivateAttr()
 
     @property
@@ -72,6 +81,10 @@ class ModelConfig(BaseModel):
     @property
     def all_attributes(self) -> list[str]:
         return self._all_attributes
+
+    @property
+    def all_attribute_logos(self) -> list[str]:
+        return self._all_attribute_logos
 
     @property
     def model_hash(self) -> str:
@@ -93,6 +106,9 @@ class ModelConfig(BaseModel):
             unique_attributes.update(attributes)
 
         self._all_attributes = list(unique_attributes)
+        self._all_attribute_logos = list(
+            unique_attributes - set(["face", "license_plate"])
+        )
 
     def check_and_load_plus_model(
         self, plus_api: PlusApi, detector: str = None
@@ -140,6 +156,9 @@ class ModelConfig(BaseModel):
             unique_attributes.update(attributes)
 
         self._all_attributes = list(unique_attributes)
+        self._all_attribute_logos = list(
+            unique_attributes - set(["face", "license_plate"])
+        )
 
         self._merged_labelmap = {
             **{int(key): val for key, val in model_info["labelMap"].items()},
@@ -157,10 +176,14 @@ class ModelConfig(BaseModel):
             self._model_hash = file_hash.hexdigest()
 
     def create_colormap(self, enabled_labels: set[str]) -> None:
-        """Get a list of colors for enabled labels."""
-        colors = generate_color_palette(len(enabled_labels))
-
-        self._colormap = {label: color for label, color in zip(enabled_labels, colors)}
+        """Get a list of colors for enabled labels that aren't attributes."""
+        enabled_trackable_labels = list(
+            filter(lambda label: label not in self._all_attributes, enabled_labels)
+        )
+        colors = generate_color_palette(len(enabled_trackable_labels))
+        self._colormap = {
+            label: color for label, color in zip(enabled_trackable_labels, colors)
+        }
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 

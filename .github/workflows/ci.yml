@@ -5,7 +5,9 @@ on:
   push:
     branches:
       - dev
-      - main
+      - master
+    paths-ignore:
+      - 'docs/**'
 
 # only run the latest commit to avoid cache overwrites
 concurrency:
@@ -35,7 +37,7 @@ jobs:
           push: true
           platforms: linux/amd64
           target: frigate
-          tags: ${{ steps.setup.outputs.image-name }}-amd64,${{ steps.setup.outputs.base-image-name }}:latest-amd64
+          tags: ${{ steps.setup.outputs.image-name }}-amd64
           cache-from: type=registry,ref=${{ steps.setup.outputs.cache-name }}-amd64
   arm64_build:
     runs-on: ubuntu-latest
@@ -57,7 +59,7 @@ jobs:
           platforms: linux/arm64
           target: frigate
           tags: |
-            ${{ steps.setup.outputs.image-name }}-standard-arm64,${{ steps.setup.outputs.base-image-name }}:latest-standard-arm64
+            ${{ steps.setup.outputs.image-name }}-standard-arm64
           cache-from: type=registry,ref=${{ steps.setup.outputs.cache-name }}-arm64
       - name: Build and push RPi build
         uses: docker/bake-action@v4
@@ -155,6 +157,28 @@ jobs:
             tensorrt.tags=${{ steps.setup.outputs.image-name }}-tensorrt
             *.cache-from=type=registry,ref=${{ steps.setup.outputs.cache-name }}-amd64
             *.cache-to=type=registry,ref=${{ steps.setup.outputs.cache-name }}-amd64,mode=max
+  arm64_extra_builds:
+    runs-on: ubuntu-latest
+    name: ARM Extra Build
+    needs:
+      - arm64_build
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up QEMU and Buildx
+        id: setup
+        uses: ./.github/actions/setup
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Rockchip build
+        uses: docker/bake-action@v3
+        with:
+          push: true
+          targets: rk
+          files: docker/rockchip/rk.hcl
+          set: |
+            rk.tags=${{ steps.setup.outputs.image-name }}-rk
+            *.cache-from=type=gha
   combined_extra_builds:
     runs-on: ubuntu-latest
     name: Combined Extra Builds
@@ -205,7 +229,7 @@ jobs:
         with:
           string: ${{ github.repository }}
       - name: Log in to the Container registry
-        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

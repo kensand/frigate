@@ -111,13 +111,13 @@ export function AnnotationSettingsPane({
   function onApply(values: z.infer<typeof formSchema>) {
     if (
       !values ||
-      values.annotationOffset == null ||
-      values.annotationOffset == "" ||
+      values.annotationOffset === null ||
+      values.annotationOffset === "" ||
       !config
     ) {
       return;
     }
-    setAnnotationOffset(values.annotationOffset);
+    setAnnotationOffset(values.annotationOffset ?? 0);
   }
 
   return (
@@ -207,12 +207,14 @@ export function AnnotationSettingsPane({
             <div className="flex flex-row gap-2 pt-5">
               <Button
                 className="flex flex-1"
+                aria-label="Apply"
                 onClick={form.handleSubmit(onApply)}
               >
                 Apply
               </Button>
               <Button
                 variant="select"
+                aria-label="Save"
                 disabled={isLoading}
                 className="flex flex-1"
                 type="submit"

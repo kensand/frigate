@@ -13,7 +13,7 @@ import { getIconForLabel } from "@/utils/iconUtil";
 import { useApiHost } from "@/api";
 import { ReviewDetailPaneType, ReviewSegment } from "@/types/review";
 import { Event } from "@/types/event";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FrigatePlusDialog } from "../dialog/FrigatePlusDialog";
 import ObjectLifecycle from "./ObjectLifecycle";
@@ -37,6 +37,10 @@ import {
   MobilePageHeader,
   MobilePageTitle,
 } from "@/components/mobile/MobilePage";
+import { useOverlayState } from "@/hooks/use-overlay-state";
+import { DownloadVideoButton } from "@/components/button/DownloadVideoButton";
+import { TooltipPortal } from "@radix-ui/react-tooltip";
+import { LuSearch } from "react-icons/lu";
 
 type ReviewDetailDialogProps = {
   review?: ReviewSegment;
@@ -49,6 +53,8 @@ export default function ReviewDetailDialog({
   const { data: config } = useSWR<FrigateConfig>("config", {
     revalidateOnFocus: false,
   });
+
+  const navigate = useNavigate();
 
   // upload
 
@@ -83,10 +89,31 @@ export default function ReviewDetailDialog({
 
   // dialog and mobile page
 
-  const [isOpen, setIsOpen] = useState(review != undefined);
+  const [isOpen, setIsOpen] = useOverlayState(
+    "reviewPane",
+    review != undefined,
+  );
+
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      setIsOpen(open);
+      if (!open) {
+        // short timeout to allow the mobile page animation
+        // to complete before updating the state
+        setTimeout(() => {
+          setReview(undefined);
+          setSelectedEvent(undefined);
+          setPane("overview");
+        }, 300);
+      }
+    },
+    [setReview, setIsOpen],
+  );
 
   useEffect(() => {
     setIsOpen(review != undefined);
+    // we know that these deps are correct
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [review]);
 
   const Overlay = isDesktop ? Sheet : MobilePage;
@@ -101,16 +128,7 @@ export default function ReviewDetailDialog({
 
   return (
     <>
-      <Overlay
-        open={isOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setReview(undefined);
-            setSelectedEvent(undefined);
-            setPane("overview");
-          }
-        }}
-      >
+      <Overlay open={isOpen ?? false} onOpenChange={handleOpenChange}>
         <FrigatePlusDialog
           upload={upload}
           onClose={() => setUpload(undefined)}
@@ -132,12 +150,12 @@ export default function ReviewDetailDialog({
         >
           <span tabIndex={0} className="sr-only" />
           {pane == "overview" && (
-            <Header className="justify-center" onClose={() => setIsOpen(false)}>
+            <Header className="justify-center">
               <Title>Review Item Details</Title>
               <Description className="sr-only">Review item details</Description>
               <div
                 className={cn(
-                  "absolute",
+                  "absolute flex gap-2 lg:flex-col",
                   isDesktop && "right-1 top-8",
                   isMobile && "right-0 top-3",
                 )}
@@ -145,6 +163,7 @@ export default function ReviewDetailDialog({
                 <Tooltip>
                   <TooltipTrigger>
                     <Button
+                      aria-label="Share this review item"
                       size="sm"
                       onClick={() =>
                         shareOrCopy(`${baseUrl}review?id=${review.id}`)
@@ -153,7 +172,21 @@ export default function ReviewDetailDialog({
                       <FaShareAlt className="size-4 text-secondary-foreground" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Share this review item</TooltipContent>
+                  <TooltipPortal>
+                    <TooltipContent>Share this review item</TooltipContent>
+                  </TooltipPortal>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <DownloadVideoButton
+                      source={`${baseUrl}api/${review.camera}/start/${review.start_time}/end/${review.end_time || Date.now() / 1000}/clip.mp4`}
+                      camera={review.camera}
+                      startTime={review.start_time}
+                    />
+                  </TooltipTrigger>
+                  <TooltipPortal>
+                    <TooltipContent>Download</TooltipContent>
+                  </TooltipPortal>
                 </Tooltip>
               </div>
             </Header>
@@ -174,7 +207,7 @@ export default function ReviewDetailDialog({
                   </div>
                 </div>
                 <div className="flex w-full flex-col items-center gap-2">
-                  <div className="flex w-full flex-col gap-1.5">
+                  <div className="flex w-full flex-col gap-1.5 lg:pr-8">
                     <div className="text-sm text-primary/40">Objects</div>
                     <div className="scrollbar-container flex max-h-32 flex-col items-start gap-2 overflow-y-auto text-sm capitalize">
                       {events?.map((event) => {
@@ -189,6 +222,21 @@ export default function ReviewDetailDialog({
                             )}
                             {event.sub_label ?? event.label} (
                             {Math.round(event.data.top_score * 100)}%)
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <div
+                                  className="cursor-pointer"
+                                  onClick={() => {
+                                    navigate(`/explore?event_id=${event.id}`);
+                                  }}
+                                >
+                                  <LuSearch className="size-4 text-muted-foreground" />
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipPortal>
+                                <TooltipContent>View in Explore</TooltipContent>
+                              </TooltipPortal>
+                            </Tooltip>
                           </div>
                         );
                       })}
@@ -273,7 +321,7 @@ function EventItem({
     <>
       <div
         className={cn(
-          "relative",
+          "relative mr-auto",
           !event.has_snapshot && "flex flex-row items-center justify-center",
         )}
         onMouseEnter={isDesktop ? () => setHovered(true) : undefined}

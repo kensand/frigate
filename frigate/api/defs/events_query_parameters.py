@@ -28,6 +28,7 @@ class EventsQueryParams(BaseModel):
     is_submitted: Optional[int] = None
     min_length: Optional[float] = None
     max_length: Optional[float] = None
+    event_id: Optional[str] = None
     sort: Optional[str] = None
     timezone: Optional[str] = "utc"
 
@@ -35,7 +36,7 @@ class EventsQueryParams(BaseModel):
 class EventsSearchQueryParams(BaseModel):
     query: Optional[str] = None
     event_id: Optional[str] = None
-    search_type: Optional[str] = "thumbnail,description"
+    search_type: Optional[str] = "thumbnail"
     include_thumbnails: Optional[int] = 1
     limit: Optional[int] = 50
     cameras: Optional[str] = "all"
@@ -44,7 +45,13 @@ class EventsSearchQueryParams(BaseModel):
     after: Optional[float] = None
     before: Optional[float] = None
     time_range: Optional[str] = DEFAULT_TIME_RANGE
+    has_clip: Optional[bool] = None
+    has_snapshot: Optional[bool] = None
+    is_submitted: Optional[bool] = None
     timezone: Optional[str] = "utc"
+    min_score: Optional[float] = None
+    max_score: Optional[float] = None
+    sort: Optional[str] = None
 
 
 class EventsSummaryQueryParams(BaseModel):
